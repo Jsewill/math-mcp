@@ -1,13 +1,15 @@
-"""Math MCP server.
+"""math-mcp — exact, arbitrary-precision, and symbolic math over MCP.
 
-Exposes exact, arbitrary-precision, and symbolic math tools backed by SymPy.
-Every tool returns deterministic results with explicit parse echoes so the
-caller can audit what was computed.
+Every tool returns a typed Pydantic model (see `models.py`) so MCP clients
+see structured output with a generated JSON schema. Input sizes are capped
+(see `limits.py`) to stop pathological-input DoS.
+
+Docstrings begin with `USE THIS WHEN …` to help LLM tool routers pick the
+right tool — phrase every client-facing rule in the imperative.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import sympy as sp
@@ -18,188 +20,217 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
 )
 
+from . import limits
+from .models import (
+    BaseConversionResult,
+    BooleanResult,
+    CombinatoricResult,
+    Eigenvalues,
+    ExactResult,
+    Factorization,
+    IntegerResult,
+    IntervalResult,
+    MatrixResult,
+    NumericRoots,
+    RationalResult,
+    Roots,
+    SolutionSet,
+    Stats,
+    SystemSolution,
+    UnitConversion,
+)
+
 mcp = FastMCP("math-mcp")
 
-TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
+_TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 
-BUILTIN_NAMES: dict[str, Any] = {
-    "pi": sp.pi,
-    "e": sp.E,
-    "E": sp.E,
-    "I": sp.I,
-    "oo": sp.oo,
-    "inf": sp.oo,
-    "infinity": sp.oo,
-    "nan": sp.nan,
-    "gamma": sp.gamma,
-    "factorial": sp.factorial,
-    "binomial": sp.binomial,
-    "log": sp.log,
-    "ln": sp.log,
-    "exp": sp.exp,
-    "sqrt": sp.sqrt,
-    "cbrt": sp.cbrt,
-    "sin": sp.sin,
-    "cos": sp.cos,
-    "tan": sp.tan,
-    "asin": sp.asin,
-    "acos": sp.acos,
-    "atan": sp.atan,
-    "atan2": sp.atan2,
-    "sinh": sp.sinh,
-    "cosh": sp.cosh,
-    "tanh": sp.tanh,
-    "Abs": sp.Abs,
-    "abs": sp.Abs,
-    "floor": sp.floor,
-    "ceiling": sp.ceiling,
-    "ceil": sp.ceiling,
-    "Min": sp.Min,
-    "Max": sp.Max,
-    "Rational": sp.Rational,
-    "Integer": sp.Integer,
-    "Float": sp.Float,
+_BUILTIN_NAMES: dict[str, Any] = {
+    "pi": sp.pi, "e": sp.E, "E": sp.E, "I": sp.I,
+    "oo": sp.oo, "inf": sp.oo, "infinity": sp.oo, "nan": sp.nan,
+    "gamma": sp.gamma, "factorial": sp.factorial, "binomial": sp.binomial,
+    "log": sp.log, "ln": sp.log, "exp": sp.exp,
+    "sqrt": sp.sqrt, "cbrt": sp.cbrt,
+    "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+    "asin": sp.asin, "acos": sp.acos, "atan": sp.atan, "atan2": sp.atan2,
+    "sinh": sp.sinh, "cosh": sp.cosh, "tanh": sp.tanh,
+    "Abs": sp.Abs, "abs": sp.Abs,
+    "floor": sp.floor, "ceiling": sp.ceiling, "ceil": sp.ceiling,
+    "Min": sp.Min, "Max": sp.Max,
+    "Rational": sp.Rational, "Integer": sp.Integer, "Float": sp.Float,
 }
 
 
-def _parse(expr: str, extra_locals: dict[str, Any] | None = None) -> sp.Expr:
-    """Parse a string into a SymPy expression safely (no Python eval)."""
+# ---------------------------------------------------------------------------
+# Parse / render helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse(expr: str, extras: dict[str, Any] | None = None) -> sp.Expr:
     if not isinstance(expr, str) or not expr.strip():
         raise ValueError("expression must be a non-empty string")
-    local_dict = dict(BUILTIN_NAMES)
-    if extra_locals:
-        local_dict.update(extra_locals)
-    return parse_expr(
-        expr,
-        local_dict=local_dict,
-        transformations=TRANSFORMS,
-        evaluate=True,
-    )
+    limits.validate_expr_len(expr)
+    local = dict(_BUILTIN_NAMES)
+    if extras:
+        local.update(extras)
+    return parse_expr(expr, local_dict=local, transformations=_TRANSFORMS, evaluate=True)
 
 
-def _parse_symbols(names: list[str] | None) -> dict[str, sp.Symbol]:
+def _symbols(names: list[str] | None) -> dict[str, sp.Symbol]:
     if not names:
         return {}
     return {n: sp.Symbol(n) for n in names}
 
 
-def _to_native(value: Any) -> Any:
-    """Convert SymPy objects into JSON-friendly primitives where reasonable."""
-    if isinstance(value, (list, tuple)):
-        return [_to_native(v) for v in value]
-    if isinstance(value, dict):
-        return {str(_to_native(k)): _to_native(v) for k, v in value.items()}
-    if isinstance(value, sp.Integer):
-        return int(value)
-    if isinstance(value, sp.Rational):
-        return {"numer": int(value.p), "denom": int(value.q), "str": str(value)}
-    if isinstance(value, sp.Float):
-        return {"float": str(value), "mpf": True}
-    if isinstance(value, sp.Basic):
-        return str(value)
-    return value
+def _latex(x: sp.Basic) -> str | None:
+    try:
+        return sp.latex(x)
+    except Exception:
+        return None
 
 
-def _result(exact: Any, *, decimal: int | None = None, **extra: Any) -> str:
-    """Build a standard JSON response.
-
-    `exact` is the primary (symbolic/rational/integer) result.
-    `decimal` (int>=1) adds a numeric evaluation with that many significant digits.
-    """
-    payload: dict[str, Any] = {
-        "exact": str(exact) if isinstance(exact, sp.Basic) else _to_native(exact),
-    }
-    if isinstance(exact, sp.Basic):
-        try:
-            latex = sp.latex(exact)
-            payload["latex"] = latex
-        except Exception:
-            pass
-    if decimal is not None and isinstance(exact, sp.Basic):
-        try:
-            payload["decimal"] = str(sp.N(exact, decimal))
-            payload["decimal_digits"] = decimal
-        except Exception as err:
-            payload["decimal_error"] = str(err)
-    payload.update({k: _to_native(v) for k, v in extra.items()})
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+def _decimal(x: sp.Basic, digits: int) -> tuple[str | None, str | None]:
+    try:
+        return str(sp.N(x, digits)), None
+    except Exception as e:
+        return None, str(e)
 
 
-# ---------------------------------------------------------------------------
-# Arithmetic + general evaluation
-# ---------------------------------------------------------------------------
+def _as_integer(expr: sp.Expr, *, label: str) -> int:
+    """Coerce a SymPy expression to a Python int, enforcing the bit cap."""
+    if not expr.is_integer:
+        raise ValueError(f"{label} must reduce to an integer (got {expr})")
+    n = int(expr)
+    limits.validate_integer_bits(n, label=label)
+    return n
+
+
+def _scalar_result(expr: sp.Basic, *, digits: int | None = None,
+                   parsed: str | None = None) -> ExactResult:
+    """Build an ExactResult, attaching a decimal iff the value is numeric."""
+    decimal, decimal_error = (None, None)
+    want_digits: int | None = None
+    if digits is not None and expr.is_number:
+        want_digits = limits.clamp_digits(digits)
+        decimal, decimal_error = _decimal(expr, want_digits)
+    return ExactResult(
+        exact=str(expr),
+        latex=_latex(expr),
+        decimal=decimal,
+        decimal_digits=want_digits,
+        decimal_error=decimal_error,
+        parsed=parsed,
+    )
+
+
+def _parse_matrix(data: list[list[str]]) -> sp.Matrix:
+    if not data:
+        raise ValueError("matrix must be non-empty")
+    rows = len(data)
+    cols = len(data[0]) if data[0] else 0
+    limits.validate_matrix_dims(rows, cols)
+    for r in data:
+        if len(r) != cols:
+            raise ValueError("matrix rows must have uniform length")
+    return sp.Matrix([[_parse(str(c)) for c in row] for row in data])
+
+
+def _matrix_strings(M: sp.Matrix) -> list[list[str]]:
+    return [[str(M[i, j]) for j in range(M.cols)] for i in range(M.rows)]
+
+
+def _matrix_result(M: sp.Matrix) -> MatrixResult:
+    return MatrixResult(
+        rows=M.rows, cols=M.cols,
+        data=_matrix_strings(M),
+        latex=_latex(M),
+    )
+
+
+# ===========================================================================
+# Arithmetic / numeric
+# ===========================================================================
 
 
 @mcp.tool()
-def evaluate(expression: str, precision: int = 50) -> str:
-    """Evaluate any arithmetic or symbolic expression exactly.
+def evaluate(expression: str, precision: int = 50) -> ExactResult:
+    """USE THIS WHEN the user asks you to compute, add, multiply, divide, or
+    simplify a numeric or symbolic expression — especially with large integers,
+    rationals, or irrationals. Returns an exact result (no float drift) plus
+    an arbitrary-precision decimal approximation.
 
-    Supports +, -, *, /, **, parentheses, rationals like 1/3, irrationals (pi, e,
-    sqrt(2)), functions (sin, cos, log, exp, gamma, factorial, binomial), and
-    arbitrarily large integers. Integer and rational math is always exact; a
-    decimal approximation is also returned at the requested precision.
+    Supports +, -, *, /, **, parentheses, implicit multiplication (`2x` means
+    `2*x`), arbitrary-size integers, rationals, functions (sin/cos/tan/log/
+    exp/sqrt/cbrt/gamma/factorial/binomial), constants (pi, e, I, oo).
 
     Args:
         expression: e.g. "2**100 + 1", "sin(pi/6)", "1/3 + 1/7", "log(2, 10)".
-        precision: significant decimal digits for the numeric approximation
-            (default 50, max 10000).
+        precision: significant decimal digits for the approximation
+            (clamped to [1, 10000]).
     """
-    precision = max(1, min(int(precision), 10000))
+    digits = limits.clamp_digits(precision)
     expr = _parse(expression)
     simplified = sp.nsimplify(expr, rational=False) if expr.is_number else expr
     try:
         exact = sp.simplify(simplified)
     except Exception:
         exact = simplified
-    return _result(exact, decimal=precision if exact.is_number else None,
-                   parsed=str(expr))
+    return _scalar_result(exact, digits=digits, parsed=str(expr))
 
 
 @mcp.tool()
-def numeric(expression: str, digits: int = 50) -> str:
-    """Evaluate an expression to N significant decimal digits using mpmath.
-
-    Use when you want a concrete decimal value (e.g. pi to 1000 places).
+def numeric(expression: str, digits: int = 50) -> ExactResult:
+    """USE THIS WHEN the user wants a specific decimal value — e.g. "pi to
+    1000 places" — rather than the exact symbolic form. Backed by mpmath
+    for arbitrary precision.
 
     Args:
-        expression: any numeric SymPy expression.
-        digits: number of significant digits (default 50, max 100000).
+        expression: any numeric SymPy expression (e.g. "pi", "sqrt(2)").
+        digits: significant digits (clamped to [1, 10000]).
     """
-    digits = max(1, min(int(digits), 100_000))
+    digits = limits.clamp_digits(digits)
     expr = _parse(expression)
     value = sp.N(expr, digits)
-    return _result(value, decimal=digits, parsed=str(expr))
+    return ExactResult(
+        exact=str(value),
+        latex=_latex(value),
+        decimal=str(value),
+        decimal_digits=digits,
+        parsed=str(expr),
+    )
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Algebra
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 
 @mcp.tool()
-def simplify(expression: str, symbols: list[str] | None = None) -> str:
-    """Algebraically simplify an expression.
+def simplify(expression: str, symbols: list[str] | None = None) -> ExactResult:
+    """USE THIS WHEN the user asks to simplify, reduce, or clean up an
+    algebraic expression.
 
     Args:
         expression: e.g. "(x**2 - 1)/(x - 1)".
         symbols: optional list of variable names appearing in the expression.
     """
-    expr = _parse(expression, _parse_symbols(symbols))
-    return _result(sp.simplify(expr), parsed=str(expr))
+    expr = _parse(expression, _symbols(symbols))
+    return _scalar_result(sp.simplify(expr), parsed=str(expr))
 
 
 @mcp.tool()
-def expand(expression: str, symbols: list[str] | None = None) -> str:
-    """Expand products and powers. e.g. "(x+1)**5" -> polynomial form."""
-    expr = _parse(expression, _parse_symbols(symbols))
-    return _result(sp.expand(expr), parsed=str(expr))
+def expand(expression: str, symbols: list[str] | None = None) -> ExactResult:
+    """USE THIS WHEN the user asks to expand, multiply out, or distribute
+    products and powers (e.g. "(x+1)**5")."""
+    expr = _parse(expression, _symbols(symbols))
+    return _scalar_result(sp.expand(expr), parsed=str(expr))
 
 
 @mcp.tool()
-def factor(expression: str, symbols: list[str] | None = None) -> str:
-    """Factor a polynomial expression over the rationals."""
-    expr = _parse(expression, _parse_symbols(symbols))
-    return _result(sp.factor(expr), parsed=str(expr))
+def factor(expression: str, symbols: list[str] | None = None) -> ExactResult:
+    """USE THIS WHEN the user asks to factor a polynomial expression over
+    the rationals."""
+    expr = _parse(expression, _symbols(symbols))
+    return _scalar_result(sp.factor(expr), parsed=str(expr))
 
 
 @mcp.tool()
@@ -207,8 +238,9 @@ def solve_equation(
     equation: str,
     variable: str = "x",
     domain: str = "complex",
-) -> str:
-    """Solve an equation (or "lhs = rhs") for a variable.
+) -> SolutionSet:
+    """USE THIS WHEN the user asks to solve an equation for a variable
+    (including "find x such that …").
 
     Args:
         equation: "x**2 - 2 = 0", or just "x**2 - 2" (implied = 0).
@@ -218,9 +250,7 @@ def solve_equation(
     var = sp.Symbol(variable)
     if "=" in equation:
         lhs_s, rhs_s = equation.split("=", 1)
-        lhs = _parse(lhs_s, {variable: var})
-        rhs = _parse(rhs_s, {variable: var})
-        eq = sp.Eq(lhs, rhs)
+        eq = sp.Eq(_parse(lhs_s, {variable: var}), _parse(rhs_s, {variable: var}))
     else:
         eq = sp.Eq(_parse(equation, {variable: var}), 0)
     domain_map = {
@@ -230,24 +260,71 @@ def solve_equation(
         "rational": sp.S.Rationals,
     }
     if domain not in domain_map:
-        raise ValueError(f"domain must be one of {list(domain_map)}")
+        raise ValueError(f"domain must be one of {sorted(domain_map)}")
     solutions = sp.solveset(eq, var, domain=domain_map[domain])
     try:
-        as_list = [str(s) for s in list(solutions)]
+        listed: list[str] | None = [str(s) for s in list(solutions)]
     except TypeError:
-        as_list = None
-    return _result(solutions, parsed=str(eq), solutions=as_list or str(solutions))
+        listed = None
+    return SolutionSet(
+        equation=str(eq),
+        domain=domain,
+        solutions=listed,
+        set_repr=str(solutions),
+        latex=_latex(solutions),
+    )
 
 
 @mcp.tool()
-def solve_system(equations: list[str], variables: list[str]) -> str:
-    """Solve a system of equations.
+def solve_inequality(
+    inequality: str,
+    variable: str = "x",
+) -> IntervalResult:
+    """USE THIS WHEN the user asks for the values of x satisfying an
+    inequality like "x**2 - 4 > 0" or "sin(x) >= 1/2". Returns the solution
+    set as an Interval / Union of intervals.
+
+    Args:
+        inequality: expression using >, <, >=, <= (e.g. "x**2 - 4 > 0").
+        variable: variable to solve for (default "x").
+    """
+    var = sp.Symbol(variable)
+    for op_str, op_cls in (
+        (">=", sp.GreaterThan),
+        ("<=", sp.LessThan),
+        (">", sp.StrictGreaterThan),
+        ("<", sp.StrictLessThan),
+    ):
+        if op_str in inequality:
+            lhs_s, rhs_s = inequality.split(op_str, 1)
+            rel = op_cls(
+                _parse(lhs_s, {variable: var}),
+                _parse(rhs_s, {variable: var}),
+            )
+            break
+    else:
+        raise ValueError(
+            "inequality must contain one of: >, <, >=, <="
+        )
+    solution = sp.solveset(rel, var, domain=sp.S.Reals)
+    return IntervalResult(
+        inequality=str(rel),
+        variable=variable,
+        solution_set=str(solution),
+        latex=_latex(solution),
+    )
+
+
+@mcp.tool()
+def solve_system(equations: list[str], variables: list[str]) -> SystemSolution:
+    """USE THIS WHEN the user asks to solve a system of equations for
+    multiple variables simultaneously.
 
     Args:
         equations: list like ["x + y = 3", "x - y = 1"].
         variables: list like ["x", "y"].
     """
-    syms = _parse_symbols(variables)
+    syms = _symbols(variables)
     eqs: list[sp.Expr] = []
     for raw in equations:
         if "=" in raw:
@@ -255,13 +332,52 @@ def solve_system(equations: list[str], variables: list[str]) -> str:
             eqs.append(sp.Eq(_parse(lhs, syms), _parse(rhs, syms)))
         else:
             eqs.append(sp.Eq(_parse(raw, syms), 0))
-    sol = sp.solve(eqs, list(syms.values()), dict=True)
-    return _result(sol, equations=[str(e) for e in eqs])
+    sols = sp.solve(eqs, list(syms.values()), dict=True)
+    rendered = [{str(k): str(v) for k, v in s.items()} for s in sols]
+    return SystemSolution(
+        equations=[str(e) for e in eqs],
+        solutions=rendered,
+    )
 
 
-# ---------------------------------------------------------------------------
+@mcp.tool()
+def polynomial_roots(polynomial: str, variable: str = "x") -> Roots:
+    """USE THIS WHEN the user asks for the roots (with multiplicities) of a
+    polynomial. Prefer this over solve_equation when the user says "roots"
+    or "zeros" or wants repeated roots called out."""
+    var = sp.Symbol(variable)
+    poly = sp.Poly(_parse(polynomial, {variable: var}), var)
+    roots = sp.roots(poly)  # {root: multiplicity}
+    return Roots(
+        polynomial=str(poly.as_expr()),
+        variable=variable,
+        roots=[str(r) for r in roots],
+        multiplicities={str(r): int(m) for r, m in roots.items()},
+    )
+
+
+@mcp.tool()
+def nroots(expression: str, variable: str = "x",
+           digits: int = 15) -> NumericRoots:
+    """USE THIS WHEN solve_equation returns a ConditionSet (SymPy can't solve
+    symbolically) and the user just needs numerical roots. Returns all
+    complex roots at the requested precision."""
+    digits = limits.clamp_digits(digits)
+    var = sp.Symbol(variable)
+    expr = _parse(expression, {variable: var})
+    poly = sp.Poly(expr, var)
+    numeric_roots = poly.nroots(n=digits)
+    return NumericRoots(
+        expression=str(expr),
+        variable=variable,
+        roots=[str(r) for r in numeric_roots],
+        digits=digits,
+    )
+
+
+# ===========================================================================
 # Calculus
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 
 @mcp.tool()
@@ -270,12 +386,13 @@ def differentiate(
     variable: str = "x",
     order: int = 1,
     symbols: list[str] | None = None,
-) -> str:
-    """Take the nth derivative of an expression with respect to a variable."""
-    local = _parse_symbols(symbols) | {variable: sp.Symbol(variable)}
+) -> ExactResult:
+    """USE THIS WHEN the user asks for a derivative or rate of change."""
+    order = limits.validate_order(order, label="order", cap=limits.MAX_DIFF_ORDER)
+    local = _symbols(symbols) | {variable: sp.Symbol(variable)}
     expr = _parse(expression, local)
-    result = sp.diff(expr, local[variable], int(order))
-    return _result(sp.simplify(result), parsed=str(expr))
+    result = sp.diff(expr, local[variable], order)
+    return _scalar_result(sp.simplify(result), parsed=str(expr))
 
 
 @mcp.tool()
@@ -285,9 +402,10 @@ def integrate(
     lower: str | None = None,
     upper: str | None = None,
     symbols: list[str] | None = None,
-) -> str:
-    """Symbolically integrate. Omit lower/upper for an indefinite integral."""
-    local = _parse_symbols(symbols) | {variable: sp.Symbol(variable)}
+) -> ExactResult:
+    """USE THIS WHEN the user asks for an integral (definite or indefinite)
+    or an area under a curve. Omit lower/upper for an indefinite integral."""
+    local = _symbols(symbols) | {variable: sp.Symbol(variable)}
     expr = _parse(expression, local)
     var = local[variable]
     if lower is None and upper is None:
@@ -298,11 +416,7 @@ def integrate(
         result = sp.integrate(expr, (var, lo, hi))
     else:
         raise ValueError("provide both lower and upper, or neither")
-    return _result(
-        sp.simplify(result),
-        decimal=50 if result.is_number else None,
-        parsed=str(expr),
-    )
+    return _scalar_result(sp.simplify(result), digits=50, parsed=str(expr))
 
 
 @mcp.tool()
@@ -312,15 +426,17 @@ def limit(
     point: str = "0",
     direction: str = "+-",
     symbols: list[str] | None = None,
-) -> str:
-    """Compute a limit. direction may be '+' (right), '-' (left), or '+-' (two-sided)."""
-    local = _parse_symbols(symbols) | {variable: sp.Symbol(variable)}
-    expr = _parse(expression, local)
-    pt = _parse(point, local)
+) -> ExactResult:
+    """USE THIS WHEN the user asks for a limit of an expression as a variable
+    approaches a value. direction may be '+' (right), '-' (left), or '+-'
+    (two-sided)."""
     if direction not in {"+", "-", "+-"}:
         raise ValueError("direction must be '+', '-', or '+-'")
+    local = _symbols(symbols) | {variable: sp.Symbol(variable)}
+    expr = _parse(expression, local)
+    pt = _parse(point, local)
     result = sp.limit(expr, local[variable], pt, direction)
-    return _result(result, decimal=50 if result.is_number else None, parsed=str(expr))
+    return _scalar_result(result, digits=50, parsed=str(expr))
 
 
 @mcp.tool()
@@ -330,13 +446,15 @@ def series(
     point: str = "0",
     order: int = 6,
     symbols: list[str] | None = None,
-) -> str:
-    """Taylor/Laurent series expansion around a point."""
-    local = _parse_symbols(symbols) | {variable: sp.Symbol(variable)}
+) -> ExactResult:
+    """USE THIS WHEN the user asks for a Taylor or Laurent series expansion
+    around a point."""
+    order = limits.validate_order(order, label="order", cap=limits.MAX_SERIES_ORDER)
+    local = _symbols(symbols) | {variable: sp.Symbol(variable)}
     expr = _parse(expression, local)
     pt = _parse(point, local)
-    result = sp.series(expr, local[variable], pt, int(order)).removeO()
-    return _result(result, parsed=str(expr))
+    result = sp.series(expr, local[variable], pt, order).removeO()
+    return _scalar_result(result, parsed=str(expr))
 
 
 @mcp.tool()
@@ -346,166 +464,265 @@ def summation(
     lower: str = "1",
     upper: str = "oo",
     symbols: list[str] | None = None,
-) -> str:
-    """Compute a (possibly infinite) summation Σ expression for index from lower..upper."""
-    local = _parse_symbols(symbols) | {index: sp.Symbol(index)}
+) -> ExactResult:
+    """USE THIS WHEN the user asks for a sum (finite or infinite) of a term
+    over an integer index. For example, Σ 1/n² from 1 to ∞."""
+    local = _symbols(symbols) | {index: sp.Symbol(index)}
     expr = _parse(expression, local)
     lo = _parse(lower, local)
     hi = _parse(upper, local)
     result = sp.summation(expr, (local[index], lo, hi))
-    return _result(sp.simplify(result),
-                   decimal=50 if result.is_number else None,
-                   parsed=str(expr))
+    return _scalar_result(sp.simplify(result), digits=50, parsed=str(expr))
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Number theory
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 
 @mcp.tool()
-def gcd(numbers: list[str]) -> str:
-    """Greatest common divisor of two or more integers (arbitrary size)."""
-    values = [sp.Integer(_parse(n)) for n in numbers]
+def gcd(numbers: list[str]) -> IntegerResult:
+    """USE THIS WHEN the user asks for the greatest common divisor / highest
+    common factor of two or more integers (any size)."""
+    values = [_as_integer(_parse(n), label="input") for n in numbers]
     if len(values) < 2:
         raise ValueError("need at least two numbers")
     result = values[0]
     for v in values[1:]:
-        result = sp.gcd(result, v)
-    return _result(result, inputs=[str(v) for v in values])
+        result = int(sp.gcd(result, v))
+    return IntegerResult(
+        value=result,
+        context={"inputs": ", ".join(str(v) for v in values)},
+    )
 
 
 @mcp.tool()
-def lcm(numbers: list[str]) -> str:
-    """Least common multiple of two or more integers."""
-    values = [sp.Integer(_parse(n)) for n in numbers]
+def lcm(numbers: list[str]) -> IntegerResult:
+    """USE THIS WHEN the user asks for the least common multiple of two or
+    more integers."""
+    values = [_as_integer(_parse(n), label="input") for n in numbers]
     if len(values) < 2:
         raise ValueError("need at least two numbers")
     result = values[0]
     for v in values[1:]:
-        result = sp.lcm(result, v)
-    return _result(result, inputs=[str(v) for v in values])
+        result = int(sp.lcm(result, v))
+    return IntegerResult(
+        value=result,
+        context={"inputs": ", ".join(str(v) for v in values)},
+    )
 
 
 @mcp.tool()
-def factorint(number: str) -> str:
-    """Prime factorization of an integer. Returns {prime: exponent}."""
-    n = sp.Integer(_parse(number))
-    factors = sp.factorint(n)
-    pretty = " * ".join(f"{p}^{e}" if e > 1 else str(p) for p, e in factors.items())
-    return _result(n, factors={str(p): int(e) for p, e in factors.items()},
-                   pretty=pretty)
+def factorint(number: str) -> Factorization:
+    """USE THIS WHEN the user asks for the prime factorization of an integer."""
+    n = _as_integer(_parse(number), label="number")
+    if n < 1:
+        raise ValueError("number must be positive")
+    fac = sp.factorint(n)
+    pretty = " * ".join(f"{p}^{e}" if e > 1 else str(p) for p, e in fac.items())
+    return Factorization(
+        number=str(n),
+        factors={str(p): int(e) for p, e in fac.items()},
+        pretty=pretty,
+        distinct_primes=len(fac),
+    )
 
 
 @mcp.tool()
-def is_prime(number: str) -> str:
-    """Deterministic primality test for integers of any size."""
-    n = sp.Integer(_parse(number))
-    return _result(bool(sp.isprime(n)), number=int(n))
+def is_prime(number: str) -> BooleanResult:
+    """USE THIS WHEN the user asks whether a (possibly large) integer is
+    prime. Deterministic below ~25 digits, BPSW above — never a false claim."""
+    n_expr = _parse(number)
+    n = int(n_expr)
+    limits.validate_integer_bits(n, label="number", cap=limits.MAX_PRIMALITY_BITS)
+    return BooleanResult(value=bool(sp.isprime(n)), subject=str(n))
 
 
 @mcp.tool()
-def nth_prime(n: int) -> str:
-    """Return the nth prime (1-indexed: prime(1)=2)."""
-    return _result(int(sp.prime(int(n))), index=int(n))
+def nth_prime(n: int) -> IntegerResult:
+    """USE THIS WHEN the user asks "what is the Nth prime?" (1-indexed:
+    prime(1) = 2)."""
+    n = int(n)
+    if n < 1:
+        raise ValueError("n must be a positive integer (1-indexed)")
+    if n > limits.MAX_NTH_PRIME_INDEX:
+        raise ValueError(
+            f"n too large ({n}; max {limits.MAX_NTH_PRIME_INDEX})"
+        )
+    return IntegerResult(
+        value=int(sp.prime(n)),
+        context={"index": str(n)},
+    )
 
 
 @mcp.tool()
-def next_prime(number: str) -> str:
-    """Smallest prime strictly greater than the given integer."""
-    n = sp.Integer(_parse(number))
-    return _result(int(sp.nextprime(n)), number=int(n))
+def next_prime(number: str) -> IntegerResult:
+    """USE THIS WHEN the user asks for the smallest prime strictly greater
+    than a given integer."""
+    n = _as_integer(_parse(number), label="number")
+    return IntegerResult(
+        value=int(sp.nextprime(n)),
+        context={"of": str(n)},
+    )
 
 
 @mcp.tool()
-def mod_pow(base: str, exponent: str, modulus: str) -> str:
-    """Modular exponentiation: base**exponent mod modulus (exact, any size)."""
-    b = int(_parse(base))
-    e = int(_parse(exponent))
-    m = int(_parse(modulus))
+def mod_pow(base: str, exponent: str, modulus: str) -> IntegerResult:
+    """USE THIS WHEN the user asks for (base**exponent) mod modulus —
+    common in cryptography. Exact for integers of any size."""
+    b = _as_integer(_parse(base), label="base")
+    e = _as_integer(_parse(exponent), label="exponent")
+    m = _as_integer(_parse(modulus), label="modulus")
     if m == 0:
         raise ValueError("modulus must be non-zero")
-    return _result(pow(b, e, m), base=b, exponent=e, modulus=m)
+    return IntegerResult(
+        value=pow(b, e, m),
+        context={"base": str(b), "exponent": str(e), "modulus": str(m)},
+    )
 
 
 @mcp.tool()
-def mod_inverse(a: str, modulus: str) -> str:
-    """Modular multiplicative inverse of a mod m. Raises if gcd(a,m) != 1."""
-    a_i = int(_parse(a))
-    m_i = int(_parse(modulus))
-    return _result(int(sp.mod_inverse(a_i, m_i)), a=a_i, modulus=m_i)
+def mod_inverse(a: str, modulus: str) -> IntegerResult:
+    """USE THIS WHEN the user asks for the modular multiplicative inverse —
+    the integer x such that a*x ≡ 1 (mod m). Errors if gcd(a, m) ≠ 1."""
+    a_i = _as_integer(_parse(a), label="a")
+    m_i = _as_integer(_parse(modulus), label="modulus")
+    return IntegerResult(
+        value=int(sp.mod_inverse(a_i, m_i)),
+        context={"a": str(a_i), "modulus": str(m_i)},
+    )
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Combinatorics
+# ===========================================================================
+
+
+@mcp.tool()
+def binomial(n: int, k: int) -> CombinatoricResult:
+    """USE THIS WHEN the user asks for "n choose k" or a binomial coefficient."""
+    n, k = limits.validate_combinatoric(n, k)
+    return CombinatoricResult(
+        operation="binomial", n=n, k=k, value=int(sp.binomial(n, k)),
+    )
+
+
+@mcp.tool()
+def permutations(n: int, k: int) -> CombinatoricResult:
+    """USE THIS WHEN the user asks for the number of k-permutations of n
+    distinct items (P(n, k) = n! / (n-k)!)."""
+    n, k = limits.validate_combinatoric(n, k)
+    if k > n:
+        raise ValueError("k must be <= n for permutations")
+    return CombinatoricResult(
+        operation="permutations", n=n, k=k,
+        value=int(sp.factorial(n) // sp.factorial(n - k)),
+    )
+
+
+@mcp.tool()
+def combinations(n: int, k: int) -> CombinatoricResult:
+    """USE THIS WHEN the user asks for the number of k-combinations of n
+    distinct items (alias for binomial, returned with operation tag)."""
+    n, k = limits.validate_combinatoric(n, k)
+    if k > n:
+        raise ValueError("k must be <= n for combinations")
+    return CombinatoricResult(
+        operation="combinations", n=n, k=k,
+        value=int(sp.binomial(n, k)),
+    )
+
+
+# ===========================================================================
 # Linear algebra
-# ---------------------------------------------------------------------------
-
-
-def _parse_matrix(data: list[list[str]]) -> sp.Matrix:
-    rows = [[_parse(str(cell)) for cell in row] for row in data]
-    return sp.Matrix(rows)
+# ===========================================================================
 
 
 @mcp.tool()
-def matrix_determinant(matrix: list[list[str]]) -> str:
-    """Exact determinant of a square matrix given as nested lists."""
+def matrix_determinant(matrix: list[list[str]]) -> ExactResult:
+    """USE THIS WHEN the user asks for the determinant of a square matrix."""
     M = _parse_matrix(matrix)
-    return _result(M.det(), rows=M.rows, cols=M.cols)
+    if M.rows != M.cols:
+        raise ValueError("determinant requires a square matrix")
+    return _scalar_result(M.det(), parsed=f"{M.rows}x{M.cols} matrix")
 
 
 @mcp.tool()
-def matrix_inverse(matrix: list[list[str]]) -> str:
-    """Exact inverse of a square matrix. Raises if singular."""
+def matrix_inverse(matrix: list[list[str]]) -> MatrixResult:
+    """USE THIS WHEN the user asks for the inverse of a square matrix.
+    Raises if the matrix is singular."""
     M = _parse_matrix(matrix)
-    inv = M.inv()
-    return _result(str(inv), rows=inv.rows, cols=inv.cols,
-                   data=[[str(inv[i, j]) for j in range(inv.cols)] for i in range(inv.rows)])
+    if M.rows != M.cols:
+        raise ValueError("inverse requires a square matrix")
+    return _matrix_result(M.inv())
 
 
 @mcp.tool()
-def matrix_multiply(a: list[list[str]], b: list[list[str]]) -> str:
-    """Exact matrix product A*B."""
+def matrix_multiply(
+    a: list[list[str]], b: list[list[str]]
+) -> MatrixResult:
+    """USE THIS WHEN the user asks for the product A*B of two matrices."""
     A = _parse_matrix(a)
     B = _parse_matrix(b)
-    C = A * B
-    return _result(str(C), rows=C.rows, cols=C.cols,
-                   data=[[str(C[i, j]) for j in range(C.cols)] for i in range(C.rows)])
+    if A.cols != B.rows:
+        raise ValueError(
+            f"matrix dim mismatch for multiply: "
+            f"{A.rows}x{A.cols} * {B.rows}x{B.cols}"
+        )
+    return _matrix_result(A * B)
 
 
 @mcp.tool()
-def matrix_eigenvalues(matrix: list[list[str]]) -> str:
-    """Exact eigenvalues with algebraic multiplicity."""
+def matrix_eigenvalues(matrix: list[list[str]]) -> Eigenvalues:
+    """USE THIS WHEN the user asks for the eigenvalues (with algebraic
+    multiplicities) of a square matrix."""
     M = _parse_matrix(matrix)
+    if M.rows != M.cols:
+        raise ValueError("eigenvalues require a square matrix")
     eigs = M.eigenvals()
-    return _result({str(k): int(v) for k, v in eigs.items()})
+    return Eigenvalues(
+        dim=M.rows,
+        eigenvalues={str(k): int(v) for k, v in eigs.items()},
+        latex=_latex(eigs),
+    )
 
 
 @mcp.tool()
-def matrix_solve(a: list[list[str]], b: list[list[str]]) -> str:
-    """Solve the linear system A x = b exactly."""
+def matrix_solve(
+    a: list[list[str]], b: list[list[str]]
+) -> MatrixResult:
+    """USE THIS WHEN the user asks to solve a linear system A x = b
+    exactly. `a` and `b` are nested-list matrices."""
     A = _parse_matrix(a)
     B = _parse_matrix(b)
-    x = A.solve(B)
-    return _result(str(x), data=[[str(x[i, j]) for j in range(x.cols)]
-                                 for i in range(x.rows)])
+    if A.rows != B.rows:
+        raise ValueError(
+            f"A and b row-dim mismatch: {A.rows} vs {B.rows}"
+        )
+    return _matrix_result(A.solve(B))
 
 
-# ---------------------------------------------------------------------------
-# Statistics (basic, exact over rationals)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Statistics
+# ===========================================================================
 
 
 @mcp.tool()
-def stats(numbers: list[str]) -> str:
-    """Mean, median, variance (sample), stdev, min, max — exact where possible."""
-    vals = [_parse(str(n)) for n in numbers]
-    if not vals:
+def stats(numbers: list[str]) -> Stats:
+    """USE THIS WHEN the user asks for summary statistics (mean, median,
+    variance, standard deviation, min, max) of a list of numbers. Results
+    are exact where possible."""
+    if not numbers:
         raise ValueError("need at least one number")
-    n = len(vals)
-    mean = sp.Rational(0)
+    limits.validate_stats_n(len(numbers))
+    vals = [_parse(str(n)) for n in numbers]
     for v in vals:
-        mean += v
-    mean = mean / n
+        if not v.is_number:
+            raise ValueError(
+                f"stats requires numeric inputs (got non-numeric: {v})"
+            )
+    n = len(vals)
+    mean = sum(vals, sp.Rational(0)) / n
     sorted_vals = sorted(vals, key=lambda v: float(v))
     if n % 2 == 1:
         median = sorted_vals[n // 2]
@@ -517,39 +734,140 @@ def stats(numbers: list[str]) -> str:
     else:
         variance = sp.Rational(0)
         stdev = sp.Rational(0)
-    return _result(
-        {
-            "mean": str(sp.simplify(mean)),
-            "median": str(sp.simplify(median)),
-            "variance_sample": str(sp.simplify(variance)),
-            "stdev_sample": str(sp.simplify(stdev)),
-            "min": str(min(sorted_vals, key=lambda v: float(v))),
-            "max": str(max(sorted_vals, key=lambda v: float(v))),
-            "count": n,
-        },
-        decimal=30,
+    mean_s = sp.simplify(mean)
+    variance_s = sp.simplify(variance)
+    stdev_s = sp.simplify(stdev)
+    decimal_block: dict[str, str] = {}
+    for label, expr in (
+        ("mean", mean_s),
+        ("variance_sample", variance_s),
+        ("stdev_sample", stdev_s),
+    ):
+        if expr.is_number:
+            decimal_block[label] = str(sp.N(expr, 30))
+    return Stats(
+        count=n,
+        mean=str(mean_s),
+        median=str(sp.simplify(median)),
+        variance_sample=str(variance_s),
+        stdev_sample=str(stdev_s),
+        min=str(sorted_vals[0]),
+        max=str(sorted_vals[-1]),
+        decimal=decimal_block or None,
     )
 
 
-# ---------------------------------------------------------------------------
-# Units / conversions helpers
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Conversions
+# ===========================================================================
 
 
 @mcp.tool()
-def to_rational(value: str, max_denominator: int = 10**9) -> str:
-    """Best rational approximation to a decimal string, bounded by max_denominator."""
+def to_rational(value: str, max_denominator: int = 10**9) -> RationalResult:
+    """USE THIS WHEN the user has a decimal string (e.g. "0.142857142857")
+    and wants the best rational approximation, bounded by max_denominator."""
     expr = _parse(value)
-    num = sp.nsimplify(expr, rational=True,
-                       rational_conversion="exact")
+    num = sp.nsimplify(expr, rational=True, rational_conversion="exact")
     approx = sp.Rational(num).limit_denominator(int(max_denominator))
-    return _result(approx, exact_rational=str(num), decimal=50)
+    return RationalResult(
+        rational=str(approx),
+        numer=int(approx.p),
+        denom=int(approx.q),
+        decimal=str(sp.N(approx, 50)),
+        exact_rational=str(num),
+    )
+
+
+@mcp.tool()
+def to_base(number: str, base: int) -> BaseConversionResult:
+    """USE THIS WHEN the user asks to convert an integer to binary, hex,
+    octal, or any base from 2 to 36."""
+    base = limits.validate_base(base)
+    n = _as_integer(_parse(number), label="number")
+
+    def _digits(x: int, b: int) -> str:
+        if x == 0:
+            return "0"
+        sign = "-" if x < 0 else ""
+        x = abs(x)
+        alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+        out: list[str] = []
+        while x:
+            x, r = divmod(x, b)
+            out.append(alphabet[r])
+        return sign + "".join(reversed(out))
+
+    return BaseConversionResult(
+        input=str(n),
+        decimal_value=n,
+        base_from=10,
+        base_to=base,
+        digits=_digits(n, base),
+    )
+
+
+@mcp.tool()
+def from_base(digits: str, base: int) -> IntegerResult:
+    """USE THIS WHEN the user provides a string of digits in a given base
+    (2-36) and wants the decimal integer."""
+    base = limits.validate_base(base)
+    if not isinstance(digits, str) or not digits.strip():
+        raise ValueError("digits must be a non-empty string")
+    limits.validate_expr_len(digits, label="digits")
+    try:
+        value = int(digits, base)
+    except ValueError as e:
+        raise ValueError(f"invalid digit string for base {base}: {e}") from None
+    limits.validate_integer_bits(value, label="parsed integer")
+    return IntegerResult(
+        value=value,
+        context={"digits": digits, "base": str(base)},
+    )
+
+
+@mcp.tool()
+def convert_units(
+    value: str, source_unit: str, target_unit: str
+) -> UnitConversion:
+    """USE THIS WHEN the user asks to convert a physical quantity between
+    units (e.g. meters to feet, kilograms to pounds, seconds to hours,
+    joules to calories). Unit names follow SymPy's `physics.units` module
+    (meter, foot, inch, kilogram, pound, second, hour, kelvin, joule, etc.)."""
+    from sympy.physics import units as u
+
+    def _resolve(name: str):
+        obj = getattr(u, name, None)
+        if obj is None or not isinstance(obj, u.Quantity):
+            raise ValueError(
+                f"unknown unit: '{name}'. Try meter, foot, inch, yard, "
+                f"mile, kilometer, centimeter, kilogram, gram, pound, "
+                f"ounce, second, minute, hour, day, year, kelvin, joule, "
+                f"calorie, watt, newton, pascal, hertz."
+            )
+        return obj
+
+    v = _parse(value)
+    src = _resolve(source_unit)
+    tgt = _resolve(target_unit)
+    converted_expr = u.convert_to(v * src, tgt)
+    scalar = sp.simplify(converted_expr / tgt)
+    decimal_str = None
+    if scalar.is_number:
+        decimal_str = str(sp.N(scalar, 15))
+    return UnitConversion(
+        value=str(v),
+        source_unit=source_unit,
+        target_unit=target_unit,
+        converted=f"{scalar} {target_unit}",
+        decimal=decimal_str,
+    )
+
+
+# ===========================================================================
+# Entry point
+# ===========================================================================
 
 
 def main() -> None:
     """Console entry point — runs the MCP server over stdio."""
     mcp.run()
-
-
-if __name__ == "__main__":
-    main()
