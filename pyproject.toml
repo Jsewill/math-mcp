@@ -5,7 +5,7 @@ description = "An MCP server providing exact, arbitrary-precision, and symbolic 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
-authors = [{ name = "Abraham Sewill", email = "abraham.sewill@gmail.com" }]
+authors = [{ name = "Abraham Sewill", email = "abraham.sewill@proton.me" }]
 keywords = ["mcp", "math", "sympy", "symbolic", "arithmetic", "llm", "claude", "anthropic"]
 classifiers = [
     "Development Status :: 4 - Beta",
