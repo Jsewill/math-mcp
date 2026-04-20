@@ -38,6 +38,7 @@ math-mcp = "math_mcp.server:main"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "coverage[toml]>=7.0",
 ]
 
 [build-system]
@@ -59,3 +60,12 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.coverage.run]
+source = ["src/math_mcp"]
+branch = false
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 100
