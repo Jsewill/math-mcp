@@ -62,8 +62,25 @@ def test_server_ships_routing_instructions() -> None:
         "symbolic",
         "mod_pow",
         "decimal-digit strings",
+        "Routing cheat sheet",  # v0.2.3: user-phrasing -> tool mappings
+        "n choose k",
     ):
         assert phrase in instructions, f"missing routing hint: {phrase!r}"
+
+
+def test_routing_cheat_sheet_covers_every_tool(tools: dict) -> None:
+    """Every registered tool should appear in the cheat-sheet so the model
+    has a user-phrasing anchor for it."""
+    instructions = mcp.instructions or ""
+    # Tools covered by a wildcard entry ("matrix_*") don't need individual names.
+    wildcarded = {
+        "matrix_determinant", "matrix_inverse", "matrix_multiply",
+        "matrix_eigenvalues", "matrix_solve",
+    }
+    for name in tools:
+        if name in wildcarded:
+            continue
+        assert name in instructions, f"tool missing from cheat sheet: {name}"
 
 
 # ---------------------------------------------------------------------------

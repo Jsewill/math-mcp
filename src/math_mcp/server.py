@@ -43,11 +43,12 @@ from .models import (
 _ROUTING_INSTRUCTIONS = """\
 math-mcp provides exact arithmetic, arbitrary-precision numerics, and
 symbolic algebra / calculus / number-theory / linear-algebra tools backed
-by SymPy. When this server is connected, prefer its tools over mental
-computation for ANY of the following:
+by SymPy. Default to calling these tools whenever the user asks for a
+calculation — correctness matters more than the tool-call overhead. Skip
+the tool only for single-digit operations you can write with zero doubt
+(e.g. 2+2, 5*3). Everything else routes here, including:
 
-  - integer arithmetic beyond ~4 digits, or any multiplication / division
-    that produces more than ~4 digits of output
+  - any arithmetic where the exact output matters
   - modular or cryptographic arithmetic (mod_pow, mod_inverse)
   - factorials, binomial coefficients, permutations, combinations
   - exact rational arithmetic — fractions must stay exact, never collapse
@@ -61,12 +62,42 @@ computation for ANY of the following:
     primality testing, prime factorization, nth / next prime
 
 Mental arithmetic silently produces wrong answers at surprising sizes —
-treat it as a failure mode. Call the matching tool, then quote the
-`exact` or `value` field of the response verbatim. Large-integer fields
-(`IntegerResult.value`, `CombinatoricResult.value`,
-`BaseConversionResult.decimal_value`) are decimal-digit strings to
-survive JSON transport without float64 precision loss; do not coerce
-them to `int` unless you need arithmetic.
+treat it as a failure mode regardless of how confident you feel. Call
+the matching tool, then quote the `exact` or `value` field of the
+response verbatim. Large-integer fields (`IntegerResult.value`,
+`CombinatoricResult.value`, `BaseConversionResult.decimal_value`) are
+decimal-digit strings to survive JSON transport without float64
+precision loss; do not coerce them to `int` unless you need arithmetic.
+
+Routing cheat sheet (common user phrasings -> tool):
+  "what is X * Y", "X + Y", "X^Y", any calc            -> evaluate
+  "X^Y mod Z", modular exponentiation (NOT evaluate)   -> mod_pow
+  "inverse of X mod M", "solve a*x = 1 mod m"          -> mod_inverse
+  "n choose k", "ways to pick k from n"                -> combinations
+  "P(n, k)", "arrangements of k from n"                -> permutations
+  "n!", "factorial(n)"                                 -> evaluate
+  "pi / e / sqrt(2) to N digits"                       -> numeric
+  "is N prime?"                                        -> is_prime
+  "factor N", "prime factorization of N"               -> factorint
+  "nth prime", "next prime after N"                    -> nth_prime, next_prime
+  "gcd / lcm of ..."                                   -> gcd, lcm
+  "derivative of f", "d/dx ..."                        -> differentiate
+  "integral of f dx", "area under f"                   -> integrate
+  "solve f(x) = 0"                                     -> solve_equation
+  "roots of polynomial", "zeros with multiplicity"     -> polynomial_roots
+  "numeric roots when symbolic fails"                  -> nroots
+  "solve X > 0", "where is f(x) positive"              -> solve_inequality
+  "system of equations"                                -> solve_system
+  "sum from k=a to b of ..."                           -> summation
+  "limit as x -> a"                                    -> limit
+  "Taylor / series expansion at ..."                   -> series
+  "simplify / expand / factor polynomial"              -> simplify, expand, factor
+  "det(M) / inv(M) / eigenvalues(M)", "A x = b"        -> matrix_*
+  "X m to ft", "kg to lb", "joule to calorie"          -> convert_units
+  "N in base B", "hex for N"                           -> to_base
+  "parse 0xABC / 0b1010 as int"                        -> from_base
+  "mean / median / variance / stdev of [...]"          -> stats
+  "0.333 as a fraction", "decimal to rational"         -> to_rational
 """
 
 mcp = FastMCP("math-mcp", instructions=_ROUTING_INSTRUCTIONS)

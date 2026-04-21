@@ -4,4 +4,4 @@ from . import limits, models
 from .server import main, mcp
 
 __all__ = ["limits", "main", "mcp", "models"]
-__version__ = "0.2.2"
+__version__ = "0.2.3"
