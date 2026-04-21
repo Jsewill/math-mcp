@@ -491,7 +491,7 @@ def gcd(numbers: list[str]) -> IntegerResult:
     for v in values[1:]:
         result = int(sp.gcd(result, v))
     return IntegerResult(
-        value=result,
+        value=str(result),
         context={"inputs": ", ".join(str(v) for v in values)},
     )
 
@@ -507,7 +507,7 @@ def lcm(numbers: list[str]) -> IntegerResult:
     for v in values[1:]:
         result = int(sp.lcm(result, v))
     return IntegerResult(
-        value=result,
+        value=str(result),
         context={"inputs": ", ".join(str(v) for v in values)},
     )
 
@@ -550,7 +550,7 @@ def nth_prime(n: int) -> IntegerResult:
             f"n too large ({n}; max {limits.MAX_NTH_PRIME_INDEX})"
         )
     return IntegerResult(
-        value=int(sp.prime(n)),
+        value=str(int(sp.prime(n))),
         context={"index": str(n)},
     )
 
@@ -561,7 +561,7 @@ def next_prime(number: str) -> IntegerResult:
     than a given integer."""
     n = _as_integer(_parse(number), label="number")
     return IntegerResult(
-        value=int(sp.nextprime(n)),
+        value=str(int(sp.nextprime(n))),
         context={"of": str(n)},
     )
 
@@ -576,7 +576,7 @@ def mod_pow(base: str, exponent: str, modulus: str) -> IntegerResult:
     if m == 0:
         raise ValueError("modulus must be non-zero")
     return IntegerResult(
-        value=pow(b, e, m),
+        value=str(pow(b, e, m)),
         context={"base": str(b), "exponent": str(e), "modulus": str(m)},
     )
 
@@ -588,7 +588,7 @@ def mod_inverse(a: str, modulus: str) -> IntegerResult:
     a_i = _as_integer(_parse(a), label="a")
     m_i = _as_integer(_parse(modulus), label="modulus")
     return IntegerResult(
-        value=int(sp.mod_inverse(a_i, m_i)),
+        value=str(int(sp.mod_inverse(a_i, m_i))),
         context={"a": str(a_i), "modulus": str(m_i)},
     )
 
@@ -603,7 +603,7 @@ def binomial(n: int, k: int) -> CombinatoricResult:
     """USE THIS WHEN the user asks for "n choose k" or a binomial coefficient."""
     n, k = limits.validate_combinatoric(n, k)
     return CombinatoricResult(
-        operation="binomial", n=n, k=k, value=int(sp.binomial(n, k)),
+        operation="binomial", n=n, k=k, value=str(int(sp.binomial(n, k))),
     )
 
 
@@ -616,7 +616,7 @@ def permutations(n: int, k: int) -> CombinatoricResult:
         raise ValueError("k must be <= n for permutations")
     return CombinatoricResult(
         operation="permutations", n=n, k=k,
-        value=int(sp.factorial(n) // sp.factorial(n - k)),
+        value=str(int(sp.factorial(n) // sp.factorial(n - k))),
     )
 
 
@@ -629,7 +629,7 @@ def combinations(n: int, k: int) -> CombinatoricResult:
         raise ValueError("k must be <= n for combinations")
     return CombinatoricResult(
         operation="combinations", n=n, k=k,
-        value=int(sp.binomial(n, k)),
+        value=str(int(sp.binomial(n, k))),
     )
 
 
@@ -771,8 +771,8 @@ def to_rational(value: str, max_denominator: int = 10**9) -> RationalResult:
     approx = sp.Rational(num).limit_denominator(int(max_denominator))
     return RationalResult(
         rational=str(approx),
-        numer=int(approx.p),
-        denom=int(approx.q),
+        numer=str(int(approx.p)),
+        denom=str(int(approx.q)),
         decimal=str(sp.N(approx, 50)),
         exact_rational=str(num),
     )
@@ -799,7 +799,7 @@ def to_base(number: str, base: int) -> BaseConversionResult:
 
     return BaseConversionResult(
         input=str(n),
-        decimal_value=n,
+        decimal_value=str(n),
         base_from=10,
         base_to=base,
         digits=_digits(n, base),
@@ -820,7 +820,7 @@ def from_base(digits: str, base: int) -> IntegerResult:
         raise ValueError(f"invalid digit string for base {base}: {e}") from None
     limits.validate_integer_bits(value, label="parsed integer")
     return IntegerResult(
-        value=value,
+        value=str(value),
         context={"digits": digits, "base": str(base)},
     )
 

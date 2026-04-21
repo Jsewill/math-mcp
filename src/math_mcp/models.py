@@ -51,9 +51,19 @@ class ExactResult(_Base):
 
 
 class IntegerResult(_Base):
-    """A pure-integer result (arbitrary size)."""
+    """A pure-integer result (arbitrary size).
 
-    value: int
+    `value` is a decimal-digit string rather than a raw int so the full
+    precision survives JSON transport — MCP clients that parse numbers as
+    IEEE-754 float64 would otherwise silently truncate integers above 2**53.
+    """
+
+    value: str = Field(
+        description=(
+            "Exact integer as a decimal-digit string. Convert with int(value) "
+            "if you need arithmetic."
+        )
+    )
     latex: str | None = None
     context: dict[str, str] | None = Field(
         default=None,
@@ -77,8 +87,8 @@ class RationalResult(_Base):
     """A rational (p/q) result with optional decimal and original-exact form."""
 
     rational: str = Field(description="p/q form as a string.")
-    numer: int
-    denom: int
+    numer: str = Field(description="Numerator as a decimal-digit string (int-safe).")
+    denom: str = Field(description="Denominator as a decimal-digit string (int-safe).")
     decimal: str | None = None
     exact_rational: str | None = Field(
         default=None,
@@ -205,21 +215,29 @@ class NumericRoots(_Base):
 
 
 class CombinatoricResult(_Base):
-    """Result of a combinatoric operation."""
+    """Result of a combinatoric operation.
+
+    `value` is a decimal-digit string to preserve precision across JSON
+    transport (binomial coefficients grow very fast — C(200, 100) is 59 digits).
+    """
 
     operation: str = Field(
         description='"binomial" | "permutations" | "combinations".'
     )
     n: int
     k: int
-    value: int
+    value: str = Field(
+        description="Exact value as a decimal-digit string."
+    )
 
 
 class BaseConversionResult(_Base):
     """Result of an integer base conversion."""
 
     input: str
-    decimal_value: int
+    decimal_value: str = Field(
+        description="Integer value in base 10 as a decimal-digit string."
+    )
     base_from: int
     base_to: int
     digits: str = Field(

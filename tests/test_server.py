@@ -382,7 +382,7 @@ def test_basel_problem(tools: dict) -> None:
 
 def test_gcd(tools: dict) -> None:
     r: IntegerResult = tools["gcd"](numbers=["462", "1071"])
-    assert r.value == 21
+    assert r.value == "21"
 
 
 def test_gcd_needs_two(tools: dict) -> None:
@@ -392,7 +392,7 @@ def test_gcd_needs_two(tools: dict) -> None:
 
 def test_lcm(tools: dict) -> None:
     r = tools["lcm"](numbers=["6", "8", "10"])
-    assert r.value == 120
+    assert r.value == "120"
 
 
 def test_lcm_needs_two(tools: dict) -> None:
@@ -419,7 +419,7 @@ def test_mersenne_prime(tools: dict) -> None:
 
 def test_nth_prime(tools: dict) -> None:
     r = tools["nth_prime"](n=10)
-    assert r.value == 29
+    assert r.value == "29"
 
 
 def test_nth_prime_non_positive(tools: dict) -> None:
@@ -434,12 +434,12 @@ def test_nth_prime_too_large(tools: dict) -> None:
 
 def test_next_prime(tools: dict) -> None:
     r = tools["next_prime"](number="100")
-    assert r.value == 101
+    assert r.value == "101"
 
 
 def test_mod_pow(tools: dict) -> None:
     r = tools["mod_pow"](base="7", exponent="2**100", modulus="10**9+7")
-    assert r.value == 641087921
+    assert r.value == "641087921"
 
 
 def test_mod_pow_zero_modulus(tools: dict) -> None:
@@ -447,9 +447,31 @@ def test_mod_pow_zero_modulus(tools: dict) -> None:
         tools["mod_pow"](base="2", exponent="3", modulus="0")
 
 
+def test_mod_pow_big_precision(tools: dict) -> None:
+    """Modular exponentiation result must survive as a full-precision string.
+
+    7^(2**100) mod (2**127 - 1) lands in the 38-digit range — well above
+    the 2**53 float64 safe-integer ceiling.
+    """
+    r = tools["mod_pow"](base="7", exponent="2**100", modulus="2**127 - 1")
+    # Cross-check with Python's arbitrary-precision pow
+    expected = str(pow(7, 2**100, 2**127 - 1))
+    assert r.value == expected
+    assert len(r.value) >= 35
+
+
+def test_gcd_big_precision(tools: dict) -> None:
+    """GCD of two large integers should survive unchanged."""
+    a = 2**200 * 3**50
+    b = 2**150 * 3**100
+    r = tools["gcd"](numbers=[str(a), str(b)])
+    assert r.value == str(2**150 * 3**50)
+    assert len(r.value) >= 40
+
+
 def test_mod_inverse(tools: dict) -> None:
     r = tools["mod_inverse"](a="3", modulus="11")
-    assert r.value == 4
+    assert r.value == "4"
 
 
 # ---------------------------------------------------------------------------
@@ -459,13 +481,25 @@ def test_mod_inverse(tools: dict) -> None:
 
 def test_binomial(tools: dict) -> None:
     r: CombinatoricResult = tools["binomial"](n=10, k=3)
-    assert r.value == 120
+    assert r.value == "120"
     assert r.operation == "binomial"
+
+
+def test_binomial_big_precision(tools: dict) -> None:
+    """C(200, 100) is 59 digits — exceeds float64 safe-integer range.
+
+    Asserts that the string-transported value preserves every digit.
+    """
+    r = tools["binomial"](n=200, k=100)
+    assert r.value == (
+        "90548514656103281165404177077484163874504589675413336841320"
+    )
+    assert len(r.value) == 59
 
 
 def test_permutations(tools: dict) -> None:
     r = tools["permutations"](n=5, k=2)
-    assert r.value == 20
+    assert r.value == "20"
 
 
 def test_permutations_k_gt_n(tools: dict) -> None:
@@ -475,7 +509,7 @@ def test_permutations_k_gt_n(tools: dict) -> None:
 
 def test_combinations(tools: dict) -> None:
     r = tools["combinations"](n=6, k=2)
-    assert r.value == 15
+    assert r.value == "15"
 
 
 def test_combinations_k_gt_n(tools: dict) -> None:
@@ -607,7 +641,7 @@ def test_to_rational(tools: dict) -> None:
     r: RationalResult = tools["to_rational"](
         value="0.333333333333", max_denominator=1000)
     assert r.rational == "1/3"
-    assert r.numer == 1 and r.denom == 3
+    assert r.numer == "1" and r.denom == "3"
 
 
 def test_to_base_hex(tools: dict) -> None:
@@ -638,7 +672,7 @@ def test_to_base_rejects_bad_base(tools: dict) -> None:
 
 def test_from_base_hex(tools: dict) -> None:
     r = tools["from_base"](digits="ff", base=16)
-    assert r.value == 255
+    assert r.value == "255"
 
 
 def test_from_base_empty_rejected(tools: dict) -> None:
