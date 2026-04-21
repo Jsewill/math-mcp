@@ -49,6 +49,23 @@ def test_registered_tool_count(tools: dict) -> None:
     assert len(tools) == 36
 
 
+def test_server_ships_routing_instructions() -> None:
+    """Server-level `instructions` is what MCP clients inject into the
+    model's context. If this gets dropped, automatic tool routing
+    regresses for every downstream user.
+    """
+    instructions = mcp.instructions or ""
+    assert "math-mcp" in instructions
+    # Key routing triggers that must stay intact
+    for phrase in (
+        "Mental arithmetic",
+        "symbolic",
+        "mod_pow",
+        "decimal-digit strings",
+    ):
+        assert phrase in instructions, f"missing routing hint: {phrase!r}"
+
+
 # ---------------------------------------------------------------------------
 # limits.py
 # ---------------------------------------------------------------------------

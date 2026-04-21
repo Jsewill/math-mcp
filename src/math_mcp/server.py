@@ -40,7 +40,36 @@ from .models import (
     UnitConversion,
 )
 
-mcp = FastMCP("math-mcp")
+_ROUTING_INSTRUCTIONS = """\
+math-mcp provides exact arithmetic, arbitrary-precision numerics, and
+symbolic algebra / calculus / number-theory / linear-algebra tools backed
+by SymPy. When this server is connected, prefer its tools over mental
+computation for ANY of the following:
+
+  - integer arithmetic beyond ~4 digits, or any multiplication / division
+    that produces more than ~4 digits of output
+  - modular or cryptographic arithmetic (mod_pow, mod_inverse)
+  - factorials, binomial coefficients, permutations, combinations
+  - exact rational arithmetic — fractions must stay exact, never collapse
+    to a floating-point decimal
+  - symbolic calculus: derivatives, integrals (definite or indefinite),
+    limits, Taylor / Laurent series, finite or infinite summations
+  - polynomial factoring, expansion, simplification, root-finding
+  - equation, inequality, or system solving
+  - matrix operations: determinant, inverse, product, eigenvalues, Ax=b
+  - base conversion, physical-unit conversion, descriptive statistics,
+    primality testing, prime factorization, nth / next prime
+
+Mental arithmetic silently produces wrong answers at surprising sizes —
+treat it as a failure mode. Call the matching tool, then quote the
+`exact` or `value` field of the response verbatim. Large-integer fields
+(`IntegerResult.value`, `CombinatoricResult.value`,
+`BaseConversionResult.decimal_value`) are decimal-digit strings to
+survive JSON transport without float64 precision loss; do not coerce
+them to `int` unless you need arithmetic.
+"""
+
+mcp = FastMCP("math-mcp", instructions=_ROUTING_INSTRUCTIONS)
 
 _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 
