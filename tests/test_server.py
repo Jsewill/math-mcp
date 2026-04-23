@@ -376,6 +376,16 @@ def test_solve_inequality_space_around_operator(tools: dict) -> None:
     assert "Interval(5, oo)" in r.solution_set
 
 
+def test_solve_inequality_empty_lhs(tools: dict) -> None:
+    with pytest.raises(ValueError, match="left-hand side"):
+        tools["solve_inequality"](inequality="> x", variable="x")
+
+
+def test_solve_inequality_empty_rhs(tools: dict) -> None:
+    with pytest.raises(ValueError, match="right-hand side"):
+        tools["solve_inequality"](inequality="x >", variable="x")
+
+
 def test_solve_system(tools: dict) -> None:
     r: SystemSolution = tools["solve_system"](
         equations=["x + y = 3", "x - y = 1"], variables=["x", "y"])
@@ -582,6 +592,13 @@ def test_mod_pow_negative_modulus(tools: dict) -> None:
 def test_mod_pow_negative_exponent_non_invertible(tools: dict) -> None:
     with pytest.raises(ValueError, match="not invertible"):
         tools["mod_pow"](base="2", exponent="-1", modulus="4")
+
+
+def test_mod_pow_negative_exponent_pow_zero(tools: dict) -> None:
+    """When pow(b, -e, m) == 0 the early-check path fires instead of the
+    try/except path. base=4, modulus=2: pow(4, 1, 2) == 0."""
+    with pytest.raises(ValueError, match="not invertible"):
+        tools["mod_pow"](base="4", exponent="-1", modulus="2")
 
 
 def test_mod_pow_big_precision(tools: dict) -> None:
