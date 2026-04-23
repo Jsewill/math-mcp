@@ -41,35 +41,61 @@ from .models import (
 )
 
 _ROUTING_INSTRUCTIONS = """\
+<priority_instructions>
 math-mcp provides exact arithmetic, arbitrary-precision numerics, and
-symbolic algebra / calculus / number-theory / linear-algebra tools backed
-by SymPy. Default to calling these tools whenever the user asks for a
-calculation — correctness matters more than the tool-call overhead. Skip
-the tool only for single-digit operations you can write with zero doubt
-(e.g. 2+2, 5*3). Everything else routes here, including:
+symbolic algebra / calculus / number-theory / linear-algebra via SymPy.
+You MUST route calculations through these tools. Mental arithmetic is a
+silent failure mode: it produces wrong answers at surprising sizes with
+no accompanying signal of doubt, so your confidence is not evidence of
+correctness and cannot be used as a routing signal. Invisible failure
+modes demand MORE reflexive tool use, not less — you cannot self-correct
+what you cannot detect. Skipping a tool is the exception that requires
+justification, not the default.
+</priority_instructions>
 
+<routing_rule>
+If the user asks for a calculation and the answer is not a trivially
+obvious single-digit fact (e.g. 2+2, 5*3), call the matching tool. This
+is a hard rule, not a preference. "I'm pretty sure it's N" is not a
+reason to skip — that is exactly the state in which mental arithmetic
+fails silently.
+</routing_rule>
+
+<forbidden_actions>
+- DO NOT do multi-digit arithmetic in your head when a tool covers it
+  (e.g. 17*23, 2^20, 13!, 1234 mod 97) — your sense of "easy" is
+  miscalibrated at the scales where errors appear.
+- DO NOT paraphrase, round, or reformat returned numeric fields — quote
+  `exact` / `value` / `decimal_value` verbatim.
+- DO NOT coerce large-integer string fields (`IntegerResult.value`,
+  `CombinatoricResult.value`, `BaseConversionResult.decimal_value`) to
+  `int` unless you actually need to do arithmetic on them; they are
+  decimal-digit strings specifically to survive JSON transport without
+  float64 precision loss.
+- DO NOT collapse exact rationals into floating-point decimals —
+  fractions must stay exact.
+- DO NOT use `evaluate` for modular exponentiation; use `mod_pow`. It
+  is overflow-safe and direction-aware in a way `evaluate(X**Y % Z)`
+  is not at cryptographic scales.
+</forbidden_actions>
+
+<tool_coverage>
+Route ALL of the following here:
   - any arithmetic where the exact output matters
-  - modular or cryptographic arithmetic (mod_pow, mod_inverse)
+  - modular / cryptographic arithmetic (mod_pow, mod_inverse)
   - factorials, binomial coefficients, permutations, combinations
-  - exact rational arithmetic — fractions must stay exact, never collapse
-    to a floating-point decimal
-  - symbolic calculus: derivatives, integrals (definite or indefinite),
-    limits, Taylor / Laurent series, finite or infinite summations
+  - exact rational arithmetic
+  - symbolic calculus: derivatives, integrals, limits, Taylor / Laurent
+    series, finite or infinite summations
   - polynomial factoring, expansion, simplification, root-finding
   - equation, inequality, or system solving
   - matrix operations: determinant, inverse, product, eigenvalues, Ax=b
   - base conversion, physical-unit conversion, descriptive statistics,
     primality testing, prime factorization, nth / next prime
+</tool_coverage>
 
-Mental arithmetic silently produces wrong answers at surprising sizes —
-treat it as a failure mode regardless of how confident you feel. Call
-the matching tool, then quote the `exact` or `value` field of the
-response verbatim. Large-integer fields (`IntegerResult.value`,
-`CombinatoricResult.value`, `BaseConversionResult.decimal_value`) are
-decimal-digit strings to survive JSON transport without float64
-precision loss; do not coerce them to `int` unless you need arithmetic.
-
-Routing cheat sheet (common user phrasings -> tool):
+<routing_cheat_sheet>
+Common user phrasings -> tool:
   "what is X * Y", "X + Y", "X^Y", any calc            -> evaluate
   "X^Y mod Z", modular exponentiation (NOT evaluate)   -> mod_pow
   "inverse of X mod M", "solve a*x = 1 mod m"          -> mod_inverse
@@ -98,6 +124,7 @@ Routing cheat sheet (common user phrasings -> tool):
   "parse 0xABC / 0b1010 as int"                        -> from_base
   "mean / median / variance / stdev of [...]"          -> stats
   "0.333 as a fraction", "decimal to rational"         -> to_rational
+</routing_cheat_sheet>
 """
 
 mcp = FastMCP("math-mcp", instructions=_ROUTING_INSTRUCTIONS)
