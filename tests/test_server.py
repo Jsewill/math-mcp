@@ -46,7 +46,7 @@ def tools() -> dict:
 
 
 def test_registered_tool_count(tools: dict) -> None:
-    assert len(tools) == 36
+    assert len(tools) == 37
 
 
 def test_server_ships_routing_instructions() -> None:
@@ -62,8 +62,14 @@ def test_server_ships_routing_instructions() -> None:
         "symbolic",
         "mod_pow",
         "decimal-digit strings",
-        "Routing cheat sheet",  # v0.2.3: user-phrasing -> tool mappings
+        "routing_cheat_sheet",  # v0.2.3: user-phrasing -> tool mappings
         "n choose k",
+        # v0.2.5: derivation trigger + failure-mode self-check
+        "DERIVED from another number",
+        "approximately",  # self_check hedging words
+        "evaluate_batch",  # tabular-rule batch route
+        "bottleneck",  # conceptual_check
+        "failure_modes",
     ):
         assert phrase in instructions, f"missing routing hint: {phrase!r}"
 
@@ -150,6 +156,16 @@ def test_validate_stats_n() -> None:
         lim.validate_stats_n(lim.MAX_STATS_N + 1)
 
 
+def test_validate_batch_size_empty() -> None:
+    with pytest.raises(ValueError):
+        lim.validate_batch_size(0)
+
+
+def test_validate_batch_size_too_big() -> None:
+    with pytest.raises(ValueError):
+        lim.validate_batch_size(lim.MAX_BATCH_SIZE + 1)
+
+
 # ---------------------------------------------------------------------------
 # Parse helper
 # ---------------------------------------------------------------------------
@@ -206,6 +222,50 @@ def test_evaluate_symbolic_has_no_decimal(tools: dict) -> None:
 def test_rejects_empty_expression(tools: dict) -> None:
     with pytest.raises(ValueError):
         tools["evaluate"](expression="")
+
+
+def test_evaluate_batch_happy_path(tools: dict) -> None:
+    r = tools["evaluate_batch"](
+        expressions=["2**10", "1/3 + 1/6", "pi", "x + x"], precision=20,
+    )
+    assert r.count == 4
+    assert r.items[0].exact == "1024"
+    assert r.items[1].exact == "1/2"
+    assert r.items[2].exact == "pi"
+    assert r.items[2].decimal is not None and r.items[2].decimal.startswith("3.14")
+    # Symbolic slot has no decimal.
+    assert r.items[3].exact == "2*x"
+    assert r.items[3].decimal is None
+    # No items errored.
+    assert all(item.error is None for item in r.items)
+
+
+def test_evaluate_batch_per_item_error_preserves_siblings(tools: dict) -> None:
+    r = tools["evaluate_batch"](expressions=["2 + 2", "", "3 * 3"])
+    assert r.count == 3
+    assert r.items[0].exact == "4" and r.items[0].error is None
+    assert r.items[1].error is not None and r.items[1].exact is None
+    assert r.items[2].exact == "9" and r.items[2].error is None
+
+
+def test_evaluate_batch_rejects_non_string_slot(tools: dict) -> None:
+    r = tools["evaluate_batch"](expressions=["2 + 2", 7])  # type: ignore[list-item]
+    assert r.items[1].error == "expression must be a string"
+    assert r.items[1].exact is None
+    # The stringified form is preserved for debugging.
+    assert r.items[1].expression == "7"
+
+
+def test_evaluate_batch_rejects_empty_list(tools: dict) -> None:
+    with pytest.raises(ValueError):
+        tools["evaluate_batch"](expressions=[])
+
+
+def test_evaluate_batch_too_large_rejected(tools: dict) -> None:
+    with pytest.raises(ValueError):
+        tools["evaluate_batch"](
+            expressions=["1"] * (lim.MAX_BATCH_SIZE + 1)
+        )
 
 
 def test_numeric_pi_60(tools: dict) -> None:
@@ -278,6 +338,11 @@ def test_solve_bad_domain_raises(tools: dict) -> None:
         tools["solve_equation"](equation="x=0", domain="quaternion")
 
 
+def test_solve_equation_with_double_equals(tools: dict) -> None:
+    r: SolutionSet = tools["solve_equation"](equation="x == 3", variable="x")
+    assert r.solutions == ["3"]
+
+
 def test_solve_inequality_gt(tools: dict) -> None:
     r: IntervalResult = tools["solve_inequality"](
         inequality="x**2 - 4 > 0", variable="x")
@@ -305,6 +370,12 @@ def test_solve_inequality_requires_operator(tools: dict) -> None:
         tools["solve_inequality"](inequality="x + 3", variable="x")
 
 
+def test_solve_inequality_space_around_operator(tools: dict) -> None:
+    r: IntervalResult = tools["solve_inequality"](
+        inequality="x > = 5", variable="x")
+    assert "Interval(5, oo)" in r.solution_set
+
+
 def test_solve_system(tools: dict) -> None:
     r: SystemSolution = tools["solve_system"](
         equations=["x + y = 3", "x - y = 1"], variables=["x", "y"])
@@ -327,6 +398,23 @@ def test_nroots_quintic(tools: dict) -> None:
         expression="x**5 - x - 1", variable="x", digits=15)
     assert len(r.roots) == 5
     assert r.digits == 15
+
+
+def test_polynomial_roots_non_polynomial(tools: dict) -> None:
+    with pytest.raises(ValueError, match="not a polynomial"):
+        tools["polynomial_roots"](polynomial="sin(x)", variable="x")
+
+
+def test_nroots_non_polynomial(tools: dict) -> None:
+    with pytest.raises(ValueError, match="not a polynomial"):
+        tools["nroots"](expression="exp(x)", variable="x")
+
+
+def test_polynomial_roots_irreducible_falls_back(tools: dict) -> None:
+    r: Roots = tools["polynomial_roots"](
+        polynomial="x**5 - x - 1", variable="x")
+    assert len(r.roots) == 5
+    assert all(m == 1 for m in r.multiplicities.values())
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +539,11 @@ def test_mersenne_prime(tools: dict) -> None:
     assert r.value is True
 
 
+def test_is_prime_rejects_non_integer(tools: dict) -> None:
+    with pytest.raises(ValueError, match="must reduce to an integer"):
+        tools["is_prime"](number="sqrt(2)")
+
+
 def test_nth_prime(tools: dict) -> None:
     r = tools["nth_prime"](n=10)
     assert r.value == "29"
@@ -479,6 +572,16 @@ def test_mod_pow(tools: dict) -> None:
 def test_mod_pow_zero_modulus(tools: dict) -> None:
     with pytest.raises(ValueError):
         tools["mod_pow"](base="2", exponent="3", modulus="0")
+
+
+def test_mod_pow_negative_modulus(tools: dict) -> None:
+    with pytest.raises(ValueError):
+        tools["mod_pow"](base="7", exponent="3", modulus="-5")
+
+
+def test_mod_pow_negative_exponent_non_invertible(tools: dict) -> None:
+    with pytest.raises(ValueError, match="not invertible"):
+        tools["mod_pow"](base="2", exponent="-1", modulus="4")
 
 
 def test_mod_pow_big_precision(tools: dict) -> None:
@@ -547,8 +650,9 @@ def test_combinations(tools: dict) -> None:
 
 
 def test_combinations_k_gt_n(tools: dict) -> None:
-    with pytest.raises(ValueError):
-        tools["combinations"](n=3, k=5)
+    r = tools["combinations"](n=3, k=5)
+    assert r.value == "0"
+    assert r.n == 3 and r.k == 5
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +770,11 @@ def test_stats_empty(tools: dict) -> None:
         tools["stats"](numbers=[])
 
 
+def test_stats_rejects_complex(tools: dict) -> None:
+    with pytest.raises(ValueError):
+        tools["stats"](numbers=["1", "I", "3"])
+
+
 # ---------------------------------------------------------------------------
 # Conversions
 # ---------------------------------------------------------------------------
@@ -702,6 +811,12 @@ def test_to_base_negative(tools: dict) -> None:
 def test_to_base_rejects_bad_base(tools: dict) -> None:
     with pytest.raises(ValueError):
         tools["to_base"](number="5", base=1)
+
+
+def test_to_base_preserves_input(tools: dict) -> None:
+    r: BaseConversionResult = tools["to_base"](number="0xff", base=10)
+    assert r.input == "0xff"
+    assert r.decimal_value == "255"
 
 
 def test_from_base_hex(tools: dict) -> None:

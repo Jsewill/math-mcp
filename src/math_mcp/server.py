@@ -23,6 +23,8 @@ from sympy.parsing.sympy_parser import (
 from . import limits
 from .models import (
     BaseConversionResult,
+    BatchItem,
+    BatchResult,
     BooleanResult,
     CombinatoricResult,
     Eigenvalues,
@@ -54,17 +56,75 @@ justification, not the default.
 </priority_instructions>
 
 <routing_rule>
-If the user asks for a calculation and the answer is not a trivially
-obvious single-digit fact (e.g. 2+2, 5*3), call the matching tool. This
-is a hard rule, not a preference. "I'm pretty sure it's N" is not a
-reason to skip — that is exactly the state in which mental arithmetic
-fails silently.
+If a number in your response is DERIVED from another number, call a tool
+to compute it. There is no "mental math" exception for multiplication,
+division, ratios, or percentages — even simple ones. There is no "it's
+only one digit of precision" exception. The friction of one extra call
+is cheaper than one wrong number.
+
+"Derived" means: produced by any operation (`*`, `/`, `%`, `×`, ratios,
+deltas, sums across rows, unit scaling, "N× more", "N% of") on at least
+one other number. If you can draw an arrow from an input number to the
+number you are about to write, it is derived and must come from a tool.
+
+"I'm pretty sure it's N" is not a reason to skip — that is exactly the
+state in which mental arithmetic fails silently.
 </routing_rule>
+
+<self_check>
+Before you finish a sentence that contains a number, check:
+
+1. Did you write `~`, `approximately`, `about`, `roughly`, `order of`,
+   `~N×`, or round to one significant figure? Those are hedging signals
+   — you typed them because you are uncertain. Stop, call the matching
+   tool, and replace the hedge with the computed value before moving on.
+
+2. Did you stack multipliers in your head ("roughly 4× worse, and then
+   2× on top of that")? Compounding guesses compounds error. One call
+   with the full expression is the only safe path.
+
+3. Is the number followed by a unit you can't trace to a specific tool
+   result (`R/W`, `TiB`, `W`, `ms`, `%`)? If you can't point at the
+   `exact` / `value` field it came from, you are guessing. Compute it.
+</self_check>
+
+<tabular_rule>
+Tables compound the bypass: writing a comparison table feels like one
+action, but every derived cell is its own silent-failure opportunity.
+
+Rule: every numeric cell in a comparison table that is DERIVED (not a
+raw input the user gave you) must come from a math-mcp call BEFORE the
+table is rendered. Do not render the table and then "fix it later" —
+the table IS the artifact.
+
+Use `evaluate_batch(expressions=[...])` to compute a whole table's
+worth of cells in one call. That removes the "too many round trips"
+excuse for skipping the tool on tabular work.
+</tabular_rule>
+
+<conceptual_check>
+Computing the right formula on the wrong model still yields a wrong
+answer — and the tool cannot catch that for you. Before writing any
+rate-vs-resource ratio, scaling claim, or "N× worse" comparison:
+
+  1. Name the bottleneck in one phrase (e.g. "GPU is saturated so power
+     is fixed at TDP regardless of load"; "HDD is idle so watt-per-bit
+     doesn't scale with read frequency"; "network is the hop limit, not
+     CPU").
+  2. Only THEN compute the ratio with the tool.
+
+If you can't name the bottleneck, you don't yet have a model — stop and
+think, don't paper over it with a precise-looking number.
+</conceptual_check>
 
 <forbidden_actions>
 - DO NOT do multi-digit arithmetic in your head when a tool covers it
   (e.g. 17*23, 2^20, 13!, 1234 mod 97) — your sense of "easy" is
   miscalibrated at the scales where errors appear.
+- DO NOT do "simple" ratios, percentages, or unit conversions in your
+  head either (4 * 0.79, 12/7, "30% of 240", "4x worse"). These are the
+  exact cases where hedging words leak in and wrong numbers survive
+  review.
 - DO NOT paraphrase, round, or reformat returned numeric fields — quote
   `exact` / `value` / `decimal_value` verbatim.
 - DO NOT coerce large-integer string fields (`IntegerResult.value`,
@@ -77,11 +137,34 @@ fails silently.
 - DO NOT use `evaluate` for modular exponentiation; use `mod_pow`. It
   is overflow-safe and direction-aware in a way `evaluate(X**Y % Z)`
   is not at cryptographic scales.
+- DO NOT render a comparison table and then retroactively "check" its
+  numbers. Compute every derived cell first (use `evaluate_batch`),
+  then render.
 </forbidden_actions>
+
+<failure_modes>
+These patterns have produced wrong answers in past sessions. Treat each
+as a tripwire — if you catch yourself doing one, stop and call a tool:
+
+- Writing a ratio cell (`×`, `%`, `vs`, `per`) without a prior tool call
+  for that specific cell.
+- Stacking "roughly N×" multipliers in your head across two or more
+  steps ("4× bigger, and then 2× slower, so ~8×…").
+- Producing a number followed by a unit (`R/W`, `TiB`, `W`, `ms`, `%`,
+  `req/s`) that you cannot trace to a specific `exact` / `value` /
+  `decimal` field from a tool result.
+- Rounding to one significant figure because the "real" number felt
+  tedious to compute — that is the opposite of the signal to trust.
+- Collapsing a small multi-step derivation ("4 * 0.79 ≈ ~0.4") into a
+  single mental step because each operation looked trivial.
+</failure_modes>
 
 <tool_coverage>
 Route ALL of the following here:
-  - any arithmetic where the exact output matters
+  - any arithmetic where the exact output matters, including ratios,
+    percentages, and unit scaling
+  - any batch of related expressions (table cells, row-by-row
+    comparisons) — use `evaluate_batch`
   - modular / cryptographic arithmetic (mod_pow, mod_inverse)
   - factorials, binomial coefficients, permutations, combinations
   - exact rational arithmetic
@@ -97,9 +180,11 @@ Route ALL of the following here:
 <routing_cheat_sheet>
 Common user phrasings -> tool:
   "what is X * Y", "X + Y", "X^Y", any calc            -> evaluate
+  "table of X/Y, A*B, ..." (many related exprs)        -> evaluate_batch
   "X^Y mod Z", modular exponentiation (NOT evaluate)   -> mod_pow
   "inverse of X mod M", "solve a*x = 1 mod m"          -> mod_inverse
-  "n choose k", "ways to pick k from n"                -> combinations
+  "n choose k", "ways to pick k from n"                -> binomial
+   "combinations of k from n"                           -> combinations
   "P(n, k)", "arrangements of k from n"                -> permutations
   "n!", "factorial(n)"                                 -> evaluate
   "pi / e / sqrt(2) to N digits"                       -> numeric
@@ -238,6 +323,18 @@ def _matrix_result(M: sp.Matrix) -> MatrixResult:
 # ===========================================================================
 
 
+def _evaluate_one(expression: str, *, digits: int) -> ExactResult:
+    """Shared core for `evaluate` and `evaluate_batch` — parse, simplify,
+    and package an ExactResult. Raises on parse/validation failure."""
+    expr = _parse(expression)
+    simplified = sp.nsimplify(expr, rational=False) if expr.is_number else expr
+    try:
+        exact = sp.simplify(simplified)
+    except Exception:
+        exact = simplified
+    return _scalar_result(exact, digits=digits, parsed=str(expr))
+
+
 @mcp.tool()
 def evaluate(expression: str, precision: int = 50) -> ExactResult:
     """USE THIS WHEN the user asks you to compute, add, multiply, divide, or
@@ -249,19 +346,62 @@ def evaluate(expression: str, precision: int = 50) -> ExactResult:
     `2*x`), arbitrary-size integers, rationals, functions (sin/cos/tan/log/
     exp/sqrt/cbrt/gamma/factorial/binomial), constants (pi, e, I, oo).
 
+    For a list of related expressions (e.g. every derived cell of a
+    comparison table), prefer `evaluate_batch` — one call, N answers.
+
     Args:
         expression: e.g. "2**100 + 1", "sin(pi/6)", "1/3 + 1/7", "log(2, 10)".
         precision: significant decimal digits for the approximation
             (clamped to [1, 10000]).
     """
+    return _evaluate_one(expression, digits=limits.clamp_digits(precision))
+
+
+@mcp.tool()
+def evaluate_batch(
+    expressions: list[str], precision: int = 50
+) -> BatchResult:
+    """USE THIS WHEN you need to compute MANY related values at once — every
+    derived cell of a comparison table, a row of ratios/percentages, or a
+    list of "X vs Y" deltas. One call replaces N round-trips, which removes
+    the friction excuse for skipping the tool on tabular or multi-row work.
+
+    Each expression is evaluated independently with `evaluate` semantics
+    (exact symbolic simplification plus a decimal approximation when the
+    result is numeric). A bad expression in one slot does NOT abort the
+    batch; that slot's `error` field is populated and the other results
+    still return — read `items[i].error` before reading `items[i].exact`.
+
+    Args:
+        expressions: list of strings like ["2**100 + 1", "1/3 + 1/7",
+            "pi * 2"]. Ordering is preserved in `items`.
+        precision: significant decimal digits for each approximation
+            (clamped to [1, 10000]); applied uniformly to every item.
+    """
+    limits.validate_batch_size(len(expressions))
     digits = limits.clamp_digits(precision)
-    expr = _parse(expression)
-    simplified = sp.nsimplify(expr, rational=False) if expr.is_number else expr
-    try:
-        exact = sp.simplify(simplified)
-    except Exception:
-        exact = simplified
-    return _scalar_result(exact, digits=digits, parsed=str(expr))
+    items: list[BatchItem] = []
+    for raw in expressions:
+        if not isinstance(raw, str):
+            items.append(BatchItem(
+                expression=str(raw),
+                error="expression must be a string",
+            ))
+            continue
+        try:
+            scalar = _evaluate_one(raw, digits=digits)
+            items.append(BatchItem(
+                expression=raw,
+                exact=scalar.exact,
+                latex=scalar.latex,
+                decimal=scalar.decimal,
+                decimal_digits=scalar.decimal_digits,
+                decimal_error=scalar.decimal_error,
+                parsed=scalar.parsed,
+            ))
+        except Exception as e:
+            items.append(BatchItem(expression=raw, error=str(e)))
+    return BatchResult(count=len(items), items=items)
 
 
 @mcp.tool()
@@ -335,6 +475,8 @@ def solve_equation(
         domain: "complex" (default), "real", "integer", or "rational".
     """
     var = sp.Symbol(variable)
+    if "==" in equation:
+        equation = equation.replace("==", "=")
     if "=" in equation:
         lhs_s, rhs_s = equation.split("=", 1)
         eq = sp.Eq(_parse(lhs_s, {variable: var}), _parse(rhs_s, {variable: var}))
@@ -375,24 +517,32 @@ def solve_inequality(
         inequality: expression using >, <, >=, <= (e.g. "x**2 - 4 > 0").
         variable: variable to solve for (default "x").
     """
+    import re
+
     var = sp.Symbol(variable)
-    for op_str, op_cls in (
-        (">=", sp.GreaterThan),
-        ("<=", sp.LessThan),
-        (">", sp.StrictGreaterThan),
-        ("<", sp.StrictLessThan),
-    ):
-        if op_str in inequality:
-            lhs_s, rhs_s = inequality.split(op_str, 1)
-            rel = op_cls(
-                _parse(lhs_s, {variable: var}),
-                _parse(rhs_s, {variable: var}),
-            )
-            break
-    else:
+    normalized = inequality.replace("> =", ">=").replace("< =", "<=")
+    match = re.search(r"\s*(>=|<=|>|<)\s*", normalized)
+    if match is None:
         raise ValueError(
             "inequality must contain one of: >, <, >=, <="
         )
+    op_str = match.group(1)
+    lhs_s = normalized[: match.start()].strip()
+    rhs_s = normalized[match.end():].strip()
+    op_cls_map = {
+        ">=": sp.GreaterThan,
+        "<=": sp.LessThan,
+        ">": sp.StrictGreaterThan,
+        "<": sp.StrictLessThan,
+    }
+    if not lhs_s:
+        raise ValueError("left-hand side of inequality is empty")
+    if not rhs_s:
+        raise ValueError("right-hand side of inequality is empty")
+    rel = op_cls_map[op_str](
+        _parse(lhs_s, {variable: var}),
+        _parse(rhs_s, {variable: var}),
+    )
     solution = sp.solveset(rel, var, domain=sp.S.Reals)
     return IntervalResult(
         inequality=str(rel),
@@ -433,8 +583,20 @@ def polynomial_roots(polynomial: str, variable: str = "x") -> Roots:
     polynomial. Prefer this over solve_equation when the user says "roots"
     or "zeros" or wants repeated roots called out."""
     var = sp.Symbol(variable)
-    poly = sp.Poly(_parse(polynomial, {variable: var}), var)
+    expr = _parse(polynomial, {variable: var})
+    try:
+        poly = sp.Poly(expr, var)
+    except sp.PolynomialError as e:
+        raise ValueError(f"not a polynomial: {e}")
     roots = sp.roots(poly)  # {root: multiplicity}
+    if not roots and poly.degree() > 0:
+        numeric = poly.nroots()
+        return Roots(
+            polynomial=str(poly.as_expr()),
+            variable=variable,
+            roots=[str(r) for r in numeric],
+            multiplicities={str(r): 1 for r in numeric},
+        )
     return Roots(
         polynomial=str(poly.as_expr()),
         variable=variable,
@@ -452,7 +614,10 @@ def nroots(expression: str, variable: str = "x",
     digits = limits.clamp_digits(digits)
     var = sp.Symbol(variable)
     expr = _parse(expression, {variable: var})
-    poly = sp.Poly(expr, var)
+    try:
+        poly = sp.Poly(expr, var)
+    except sp.PolynomialError as e:
+        raise ValueError(f"not a polynomial: {e}")
     numeric_roots = poly.nroots(n=digits)
     return NumericRoots(
         expression=str(expr),
@@ -619,8 +784,7 @@ def factorint(number: str) -> Factorization:
 def is_prime(number: str) -> BooleanResult:
     """USE THIS WHEN the user asks whether a (possibly large) integer is
     prime. Deterministic below ~25 digits, BPSW above — never a false claim."""
-    n_expr = _parse(number)
-    n = int(n_expr)
+    n = _as_integer(_parse(number), label="number")
     limits.validate_integer_bits(n, label="number", cap=limits.MAX_PRIMALITY_BITS)
     return BooleanResult(value=bool(sp.isprime(n)), subject=str(n))
 
@@ -660,10 +824,25 @@ def mod_pow(base: str, exponent: str, modulus: str) -> IntegerResult:
     b = _as_integer(_parse(base), label="base")
     e = _as_integer(_parse(exponent), label="exponent")
     m = _as_integer(_parse(modulus), label="modulus")
-    if m == 0:
-        raise ValueError("modulus must be non-zero")
+    if m <= 0:
+        raise ValueError("modulus must be positive")
+    if e < 0:
+        if pow(b, -e, m) == 0:
+            raise ValueError(
+                "base is not invertible modulo modulus "
+                f"(gcd({b}, {m}) != 1)"
+            )
+        try:
+            result = pow(b, e, m)
+        except ValueError:
+            raise ValueError(
+                "base is not invertible modulo modulus "
+                f"(gcd({b}, {m}) != 1)"
+            )
+    else:
+        result = pow(b, e, m)
     return IntegerResult(
-        value=str(pow(b, e, m)),
+        value=str(result),
         context={"base": str(b), "exponent": str(e), "modulus": str(m)},
     )
 
@@ -712,8 +891,6 @@ def combinations(n: int, k: int) -> CombinatoricResult:
     """USE THIS WHEN the user asks for the number of k-combinations of n
     distinct items (alias for binomial, returned with operation tag)."""
     n, k = limits.validate_combinatoric(n, k)
-    if k > n:
-        raise ValueError("k must be <= n for combinations")
     return CombinatoricResult(
         operation="combinations", n=n, k=k,
         value=str(int(sp.binomial(n, k))),
@@ -804,9 +981,9 @@ def stats(numbers: list[str]) -> Stats:
     limits.validate_stats_n(len(numbers))
     vals = [_parse(str(n)) for n in numbers]
     for v in vals:
-        if not v.is_number:
+        if not v.is_number or not v.is_real:
             raise ValueError(
-                f"stats requires numeric inputs (got non-numeric: {v})"
+                f"stats requires real numeric inputs (got non-numeric: {v})"
             )
     n = len(vals)
     mean = sum(vals, sp.Rational(0)) / n
@@ -885,7 +1062,7 @@ def to_base(number: str, base: int) -> BaseConversionResult:
         return sign + "".join(reversed(out))
 
     return BaseConversionResult(
-        input=str(n),
+        input=number,
         decimal_value=str(n),
         base_from=10,
         base_to=base,

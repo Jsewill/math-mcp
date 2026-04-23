@@ -245,6 +245,43 @@ class BaseConversionResult(_Base):
     )
 
 
+class BatchItem(_Base):
+    """One entry inside a BatchResult — success or per-item error.
+
+    A single bad expression must not void an entire batch, so failures are
+    reported per-item (`error` set, `exact` null) rather than raised.
+    """
+
+    expression: str = Field(description="The input expression for this slot.")
+    exact: str | None = Field(
+        default=None,
+        description="Canonical exact form (null if this item errored).",
+    )
+    latex: str | None = None
+    decimal: str | None = None
+    decimal_digits: int | None = None
+    decimal_error: str | None = None
+    parsed: str | None = None
+    error: str | None = Field(
+        default=None,
+        description=(
+            "Error message for this item if parsing/evaluation failed; null "
+            "on success. Inspect this field before reading `exact`."
+        ),
+    )
+
+
+class BatchResult(_Base):
+    """Aligned results for an evaluate_batch call.
+
+    `items[i]` corresponds to the i-th input expression. The ordering is
+    preserved, so callers can drop results straight into tabular cells.
+    """
+
+    count: int = Field(description="Number of items in the batch (== len(items)).")
+    items: list[BatchItem]
+
+
 class UnitConversion(_Base):
     """Result of a physical-unit conversion (SymPy units)."""
 

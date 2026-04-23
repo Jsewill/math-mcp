@@ -45,6 +45,9 @@ MAX_COMBINATORIC_N = 10_000
 MAX_NTH_PRIME_INDEX = 1_000_000
 """Max index for nth_prime (sieve-based generation scales with index)."""
 
+MAX_BATCH_SIZE = 64
+"""Max number of expressions in a single evaluate_batch call."""
+
 MIN_BASE = 2
 MAX_BASE = 36
 """Base range for to_base / from_base conversions (compatible with int())."""
@@ -130,4 +133,14 @@ def validate_stats_n(n: int) -> None:
     if n > MAX_STATS_N:
         raise ValueError(
             f"stats input too large ({n}; max {MAX_STATS_N})"
+        )
+
+
+def validate_batch_size(n: int) -> None:
+    """Reject empty or oversized expression batches."""
+    if n < 1:
+        raise ValueError("need at least one expression")
+    if n > MAX_BATCH_SIZE:
+        raise ValueError(
+            f"batch too large ({n} expressions; max {MAX_BATCH_SIZE})"
         )

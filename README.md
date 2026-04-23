@@ -11,11 +11,11 @@ Every tool returns a typed [Pydantic](https://docs.pydantic.dev) model, so MCP c
 
 ## Features
 
-36 tools across seven domains:
+37 tools across seven domains:
 
 | Domain | Tools |
 | --- | --- |
-| **Arithmetic / numeric** | `evaluate`, `numeric` (up to 10,000 digits) |
+| **Arithmetic / numeric** | `evaluate`, `evaluate_batch`, `numeric` (up to 10,000 digits) |
 | **Algebra** | `simplify`, `expand`, `factor`, `solve_equation`, `solve_inequality`, `solve_system`, `polynomial_roots`, `nroots` |
 | **Calculus** | `differentiate`, `integrate` (definite & indefinite), `limit`, `series`, `summation` |
 | **Number theory** | `gcd`, `lcm`, `factorint`, `is_prime`, `nth_prime`, `next_prime`, `mod_pow`, `mod_inverse` |
