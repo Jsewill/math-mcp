@@ -404,7 +404,7 @@ def test_polynomial_roots(tools: dict) -> None:
 
 def test_nroots_quintic(tools: dict) -> None:
     r: NumericRoots = tools["nroots"](
-        expression="x**5 - x - 1", variable="x", digits=15)
+        polynomial="x**5 - x - 1", variable="x", digits=15)
     assert len(r.roots) == 5
     assert r.digits == 15
 
@@ -416,7 +416,7 @@ def test_polynomial_roots_non_polynomial(tools: dict) -> None:
 
 def test_nroots_non_polynomial(tools: dict) -> None:
     with pytest.raises(ValueError, match="not a polynomial"):
-        tools["nroots"](expression="exp(x)", variable="x")
+        tools["nroots"](polynomial="exp(x)", variable="x")
 
 
 def test_polynomial_roots_irreducible_falls_back(tools: dict) -> None:
@@ -714,11 +714,46 @@ def test_matrix_eigenvalues(tools: dict) -> None:
         matrix=[["2", "0"], ["0", "3"]])
     assert r.dim == 2
     assert r.eigenvalues == {"2": 1, "3": 1}
+    assert r.digits == 15
+    assert r.numeric is not None
+    assert set(r.numeric.keys()) == {"2", "3"}
+    assert float(r.numeric["2"]) == 2.0
+    assert float(r.numeric["3"]) == 3.0
+
+
+def test_matrix_eigenvalues_numeric_gnarly_symbolic_form(tools: dict) -> None:
+    r: Eigenvalues = tools["matrix_eigenvalues"](
+        matrix=[["4", "1", "2"], ["1", "3", "0"], ["2", "0", "5"]],
+        digits=10,
+    )
+    assert r.numeric is not None
+    assert r.digits == 10
+    approx = sorted(float(v) for v in r.numeric.values())
+    # trace and det must match the matrix (4+3+5=12, det=43)
+    assert abs(sum(approx) - 12.0) < 1e-8
+    assert abs(approx[0] * approx[1] * approx[2] - 43.0) < 1e-6
+
+
+def test_matrix_eigenvalues_symbolic_entries(tools: dict) -> None:
+    # symbolic entries -> eigenvalues retain free symbols -> numeric=None
+    r: Eigenvalues = tools["matrix_eigenvalues"](
+        matrix=[["a", "0"], ["0", "b"]])
+    assert r.numeric is None
+    assert r.digits is None
 
 
 def test_matrix_eigenvalues_non_square(tools: dict) -> None:
     with pytest.raises(ValueError):
         tools["matrix_eigenvalues"](matrix=[["1", "2", "3"], ["4", "5", "6"]])
+
+
+def test_matrix_accepts_numeric_entries(tools: dict) -> None:
+    # int / float entries must be accepted alongside strings
+    r = tools["matrix_determinant"](matrix=[[4, 1, 2], [1, 3, 0], [2, 0, 5]])
+    assert r.exact == "43"
+    # mixed str/int/float must also work
+    r2 = tools["matrix_determinant"](matrix=[[1.5, "0"], ["0", 2]])
+    assert float(r2.exact) == pytest.approx(3.0)
 
 
 def test_matrix_solve(tools: dict) -> None:

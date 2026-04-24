@@ -203,7 +203,7 @@ def _scalar_result(expr: sp.Basic, *, digits: int | None = None,
     )
 
 
-def _parse_matrix(data: list[list[str]]) -> sp.Matrix:
+def _parse_matrix(data: list[list[str | int | float]]) -> sp.Matrix:
     if not data:
         raise ValueError("matrix must be non-empty")
     rows = len(data)
@@ -515,21 +515,22 @@ def polynomial_roots(polynomial: str, variable: str = "x") -> Roots:
 
 
 @mcp.tool()
-def nroots(expression: str, variable: str = "x",
+def nroots(polynomial: str, variable: str = "x",
            digits: int = 15) -> NumericRoots:
     """USE THIS WHEN solve_equation returns a ConditionSet (SymPy can't solve
     symbolically) and the user just needs numerical roots. Returns all
-    complex roots at the requested precision."""
+    complex roots at the requested precision. Parameter name matches the
+    sibling `polynomial_roots` tool."""
     digits = limits.clamp_digits(digits)
     var = sp.Symbol(variable)
-    expr = _parse(expression, {variable: var})
+    expr = _parse(polynomial, {variable: var})
     try:
         poly = sp.Poly(expr, var)
     except sp.PolynomialError as e:
         raise ValueError(f"not a polynomial: {e}")
     numeric_roots = poly.nroots(n=digits)
     return NumericRoots(
-        expression=str(expr),
+        polynomial=str(expr),
         variable=variable,
         roots=[str(r) for r in numeric_roots],
         digits=digits,
@@ -812,7 +813,7 @@ def combinations(n: int, k: int) -> CombinatoricResult:
 
 
 @mcp.tool()
-def matrix_determinant(matrix: list[list[str]]) -> ExactResult:
+def matrix_determinant(matrix: list[list[str | int | float]]) -> ExactResult:
     """USE THIS WHEN the user asks for the determinant of a square matrix."""
     M = _parse_matrix(matrix)
     if M.rows != M.cols:
@@ -821,7 +822,7 @@ def matrix_determinant(matrix: list[list[str]]) -> ExactResult:
 
 
 @mcp.tool()
-def matrix_inverse(matrix: list[list[str]]) -> MatrixResult:
+def matrix_inverse(matrix: list[list[str | int | float]]) -> MatrixResult:
     """USE THIS WHEN the user asks for the inverse of a square matrix.
     Raises if the matrix is singular."""
     M = _parse_matrix(matrix)
@@ -832,7 +833,7 @@ def matrix_inverse(matrix: list[list[str]]) -> MatrixResult:
 
 @mcp.tool()
 def matrix_multiply(
-    a: list[list[str]], b: list[list[str]]
+    a: list[list[str | int | float]], b: list[list[str | int | float]]
 ) -> MatrixResult:
     """USE THIS WHEN the user asks for the product A*B of two matrices."""
     A = _parse_matrix(a)
@@ -846,23 +847,41 @@ def matrix_multiply(
 
 
 @mcp.tool()
-def matrix_eigenvalues(matrix: list[list[str]]) -> Eigenvalues:
+def matrix_eigenvalues(
+    matrix: list[list[str | int | float]], digits: int = 15
+) -> Eigenvalues:
     """USE THIS WHEN the user asks for the eigenvalues (with algebraic
-    multiplicities) of a square matrix."""
+    multiplicities) of a square matrix. Returns both the exact symbolic
+    form and a decimal approximation at `digits` precision — prefer the
+    `numeric` field for readable values when the symbolic form is an
+    unwieldy nested radical."""
     M = _parse_matrix(matrix)
     if M.rows != M.cols:
         raise ValueError("eigenvalues require a square matrix")
+    digits = limits.clamp_digits(digits)
     eigs = M.eigenvals()
+    numeric: dict[str, str] | None = {}
+    for k in eigs:
+        # chop=True strips tiny imaginary artefacts left by evalf when the
+        # symbolic form goes through complex intermediates (e.g. the
+        # trig/cube-root form for real eigenvalues of a 3x3 symmetric matrix).
+        approx = sp.sympify(k).evalf(digits, chop=True)
+        if approx.free_symbols:
+            numeric = None
+            break
+        numeric[str(k)] = str(approx)
     return Eigenvalues(
         dim=M.rows,
         eigenvalues={str(k): int(v) for k, v in eigs.items()},
+        numeric=numeric,
+        digits=digits if numeric is not None else None,
         latex=_latex(eigs),
     )
 
 
 @mcp.tool()
 def matrix_solve(
-    a: list[list[str]], b: list[list[str]]
+    a: list[list[str | int | float]], b: list[list[str | int | float]]
 ) -> MatrixResult:
     """USE THIS WHEN the user asks to solve a linear system A x = b
     exactly. `a` and `b` are nested-list matrices."""

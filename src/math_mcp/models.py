@@ -191,6 +191,21 @@ class Eigenvalues(_Base):
     eigenvalues: dict[str, int] = Field(
         description="eigenvalue -> algebraic multiplicity."
     )
+    numeric: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "exact eigenvalue string -> decimal approximation at `digits` "
+            "precision. Null when any eigenvalue still contains free symbols "
+            "(e.g. matrix has symbolic entries) and cannot be evaluated."
+        ),
+    )
+    digits: int | None = Field(
+        default=None,
+        description=(
+            "Significant digits used for the `numeric` approximations; null "
+            "when `numeric` is null."
+        ),
+    )
     latex: str | None = None
 
 
@@ -206,9 +221,9 @@ class Roots(_Base):
 
 
 class NumericRoots(_Base):
-    """Numerical (floating-point) roots of an expression."""
+    """Numerical (floating-point) roots of a polynomial."""
 
-    expression: str
+    polynomial: str
     variable: str
     roots: list[str] = Field(description="Numeric roots as decimal strings.")
     digits: int
