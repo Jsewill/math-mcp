@@ -56,20 +56,19 @@ def test_server_ships_routing_instructions() -> None:
     """
     instructions = mcp.instructions or ""
     assert "math-mcp" in instructions
-    # Key routing triggers that must stay intact
+    # Key routing triggers that must stay intact. Enforcement (bash-calculator
+    # interception, SessionStart injection) is additionally provided by the
+    # plugin/ shipped in this repo; the server-level string below is the
+    # baseline that must land in every MCP client, with or without the plugin.
     for phrase in (
         "Mental arithmetic",
         "symbolic",
-        "mod_pow",
-        "decimal-digit strings",
-        "routing_cheat_sheet",  # v0.2.3: user-phrasing -> tool mappings
+        "mod_pow",  # <never>: evaluate-vs-mod_pow footgun
+        "routing_cheat_sheet",  # user-phrasing -> tool mappings
         "n choose k",
-        # v0.2.5: derivation trigger + failure-mode self-check
-        "DERIVED from another number",
-        "approximately",  # self_check hedging words
-        "evaluate_batch",  # tabular-rule batch route
-        "bottleneck",  # conceptual_check
-        "failure_modes",
+        "DERIVED from another number",  # routing_rule derivation trigger
+        "approximately",  # hedging-word self-check folded into routing_rule
+        "evaluate_batch",  # batch route in cheat sheet
     ):
         assert phrase in instructions, f"missing routing hint: {phrase!r}"
 

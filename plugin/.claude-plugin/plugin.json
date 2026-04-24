@@ -1,0 +1,21 @@
+{
+  "name": "math-mcp",
+  "version": "0.3.0",
+  "description": "Routing enforcement for math-mcp — PreToolUse:Bash intercepts shell calculators, SessionStart injects a terse routing cheat sheet, plus a trigger-phrase skill and /math-verify slash command.",
+  "author": {
+    "name": "Abraham Sewill",
+    "email": "abraham.sewill@proton.me",
+    "url": "https://github.com/Jsewill"
+  },
+  "homepage": "https://github.com/Jsewill/math-mcp",
+  "repository": "https://github.com/Jsewill/math-mcp",
+  "license": "MIT",
+  "keywords": ["math", "sympy", "mcp", "routing", "arithmetic", "precision"],
+  "mcpServers": {
+    "math-mcp": {
+      "command": "uvx",
+      "args": ["math-mcp"]
+    }
+  },
+  "skills": "./skills/"
+}

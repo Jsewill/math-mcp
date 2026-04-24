@@ -85,6 +85,52 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 }
 ```
 
+## Plugin: enforce routing (optional)
+
+The MCP server ships in-context routing instructions, but those are persuasion — a stubborn agent can still shell out to `python -c`, `bc`, or `$((...))`. The `plugin/` directory adds runtime *enforcement*:
+
+- **PreToolUse:Bash hook** — regex-detects shell calculator patterns (`python -c`, `bc`, `dc`, `qalc`, `$((...))`, `node -e`, `expr`, `perl -e`, `awk 'BEGIN{print}'`) and nudges the model toward `mcp__math-mcp__evaluate` / `evaluate_batch`. Catches the "I'll just use bash" path.
+- **UserPromptSubmit hook** — when the user's prompt contains math signals (digits with operators, exponents, `calculate` / `solve` / `integrate` / …, percent-of, unit conversions, primality, stats, base conversions, matrix ops), injects a pre-response directive into context *for that turn only* requiring any derived number to come from a `mcp__math-mcp__*` call. Zero context cost on non-math turns.
+- **SubagentStart hook** — subagents don't inherit the parent session's `UserPromptSubmit` injection, so without this hook delegation (to Explore / Plan / custom agents) is an enforcement hole. Re-plants a short routing directive into every spawned subagent.
+- **Skill** (`math-mcp`) — phrase-triggered tool picker; loads only when it's needed.
+- **Slash command** (`/math-verify`) — post-hoc re-verification of every derived number in the last assistant turn.
+
+Session-level routing rules arrive via the server's MCP `instructions` field, so no `SessionStart` hook is needed — it would just duplicate what the MCP server already ships.
+
+> **Honest limit:** no Claude Code hook fires on the assistant's prose output itself, so mental arithmetic that is embedded directly in text (no tool call, no shell fallback) cannot be blocked at inference time. The above hooks maximize pressure at every boundary the harness exposes (user prompt, tool call); the rest is the model's training-level reflex for tool use.
+
+The detector is shared (Node ESM in `plugin/core/detect_math.mjs`; inlined into `plugin/opencode/math-mcp.ts` so the opencode install stays one file).
+
+### Claude Code
+
+From this repo as a marketplace (recommended):
+
+```
+/plugin marketplace add Jsewill/math-mcp
+/plugin install math-mcp@math-mcp
+```
+
+Or point Claude Code directly at the plugin directory:
+
+```bash
+claude plugin install /path/to/math-mcp/plugin
+```
+
+The plugin's manifest (`plugin/.claude-plugin/plugin.json`) also registers the MCP server, so installing the plugin replaces the `claude mcp add` step above.
+
+### opencode
+
+Drop the single-file plugin into your opencode plugins dir and add math-mcp under `mcp` in your `opencode.json`:
+
+```bash
+# global (every opencode project)
+cp plugin/opencode/math-mcp.ts ~/.config/opencode/plugins/math-mcp.ts
+# or per-project
+cp plugin/opencode/math-mcp.ts .opencode/plugins/math-mcp.ts
+```
+
+Merge `plugin/opencode/opencode.json` into your config to register the MCP server. Optionally copy `plugin/opencode/AGENTS.md` into project root for session-level routing rules.
+
 ## Example tool calls
 
 ```

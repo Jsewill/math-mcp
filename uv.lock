@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.10"
 
 [options]
-exclude-newer = "2026-04-16T06:16:44.491652802Z"
+exclude-newer = "2026-04-17T08:56:13.881283838Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -454,7 +454,7 @@ wheels = [
 
 [[package]]
 name = "math-mcp"
-version = "0.2.5"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },

@@ -68,114 +68,23 @@ one other number. If you can draw an arrow from an input number to the
 number you are about to write, it is derived and must come from a tool.
 
 "I'm pretty sure it's N" is not a reason to skip — that is exactly the
-state in which mental arithmetic fails silently.
+state in which mental arithmetic fails silently. Hedging words (`~`,
+`approximately`, `about`, `roughly`, `order of`, `~N×`, rounding to one
+significant figure) are what you type when you are unsure — stop and
+call a tool instead of emitting the hedge.
 </routing_rule>
 
-<self_check>
-Before you finish a sentence that contains a number, check:
-
-1. Did you write `~`, `approximately`, `about`, `roughly`, `order of`,
-   `~N×`, or round to one significant figure? Those are hedging signals
-   — you typed them because you are uncertain. Stop, call the matching
-   tool, and replace the hedge with the computed value before moving on.
-
-2. Did you stack multipliers in your head ("roughly 4× worse, and then
-   2× on top of that")? Compounding guesses compounds error. One call
-   with the full expression is the only safe path.
-
-3. Is the number followed by a unit you can't trace to a specific tool
-   result (`R/W`, `TiB`, `W`, `ms`, `%`)? If you can't point at the
-   `exact` / `value` field it came from, you are guessing. Compute it.
-</self_check>
-
-<tabular_rule>
-Tables compound the bypass: writing a comparison table feels like one
-action, but every derived cell is its own silent-failure opportunity.
-
-Rule: every numeric cell in a comparison table that is DERIVED (not a
-raw input the user gave you) must come from a math-mcp call BEFORE the
-table is rendered. Do not render the table and then "fix it later" —
-the table IS the artifact.
-
-Use `evaluate_batch(expressions=[...])` to compute a whole table's
-worth of cells in one call. That removes the "too many round trips"
-excuse for skipping the tool on tabular work.
-</tabular_rule>
-
-<conceptual_check>
-Computing the right formula on the wrong model still yields a wrong
-answer — and the tool cannot catch that for you. Before writing any
-rate-vs-resource ratio, scaling claim, or "N× worse" comparison:
-
-  1. Name the bottleneck in one phrase (e.g. "GPU is saturated so power
-     is fixed at TDP regardless of load"; "HDD is idle so watt-per-bit
-     doesn't scale with read frequency"; "network is the hop limit, not
-     CPU").
-  2. Only THEN compute the ratio with the tool.
-
-If you can't name the bottleneck, you don't yet have a model — stop and
-think, don't paper over it with a precise-looking number.
-</conceptual_check>
-
-<forbidden_actions>
-- DO NOT do multi-digit arithmetic in your head when a tool covers it
-  (e.g. 17*23, 2^20, 13!, 1234 mod 97) — your sense of "easy" is
-  miscalibrated at the scales where errors appear.
-- DO NOT do "simple" ratios, percentages, or unit conversions in your
-  head either (4 * 0.79, 12/7, "30% of 240", "4x worse"). These are the
-  exact cases where hedging words leak in and wrong numbers survive
-  review.
-- DO NOT paraphrase, round, or reformat returned numeric fields — quote
-  `exact` / `value` / `decimal_value` verbatim.
-- DO NOT coerce large-integer string fields (`IntegerResult.value`,
-  `CombinatoricResult.value`, `BaseConversionResult.decimal_value`) to
-  `int` unless you actually need to do arithmetic on them; they are
-  decimal-digit strings specifically to survive JSON transport without
-  float64 precision loss.
-- DO NOT collapse exact rationals into floating-point decimals —
-  fractions must stay exact.
-- DO NOT use `evaluate` for modular exponentiation; use `mod_pow`. It
-  is overflow-safe and direction-aware in a way `evaluate(X**Y % Z)`
-  is not at cryptographic scales.
-- DO NOT render a comparison table and then retroactively "check" its
-  numbers. Compute every derived cell first (use `evaluate_batch`),
-  then render.
-</forbidden_actions>
-
-<failure_modes>
-These patterns have produced wrong answers in past sessions. Treat each
-as a tripwire — if you catch yourself doing one, stop and call a tool:
-
-- Writing a ratio cell (`×`, `%`, `vs`, `per`) without a prior tool call
-  for that specific cell.
-- Stacking "roughly N×" multipliers in your head across two or more
-  steps ("4× bigger, and then 2× slower, so ~8×…").
-- Producing a number followed by a unit (`R/W`, `TiB`, `W`, `ms`, `%`,
-  `req/s`) that you cannot trace to a specific `exact` / `value` /
-  `decimal` field from a tool result.
-- Rounding to one significant figure because the "real" number felt
-  tedious to compute — that is the opposite of the signal to trust.
-- Collapsing a small multi-step derivation ("4 * 0.79 ≈ ~0.4") into a
-  single mental step because each operation looked trivial.
-</failure_modes>
-
-<tool_coverage>
-Route ALL of the following here:
-  - any arithmetic where the exact output matters, including ratios,
-    percentages, and unit scaling
-  - any batch of related expressions (table cells, row-by-row
-    comparisons) — use `evaluate_batch`
-  - modular / cryptographic arithmetic (mod_pow, mod_inverse)
-  - factorials, binomial coefficients, permutations, combinations
-  - exact rational arithmetic
-  - symbolic calculus: derivatives, integrals, limits, Taylor / Laurent
-    series, finite or infinite summations
-  - polynomial factoring, expansion, simplification, root-finding
-  - equation, inequality, or system solving
-  - matrix operations: determinant, inverse, product, eigenvalues, Ax=b
-  - base conversion, physical-unit conversion, descriptive statistics,
-    primality testing, prime factorization, nth / next prime
-</tool_coverage>
+<never>
+- Do NOT shell out for math — `python -c`, `bc`, `dc`, `qalc`, `$((...))`,
+  `node -e`, `expr`, `perl -e`, `awk 'BEGIN{print ...}'` all silently lose
+  precision on big integers and collapse rationals to floats.
+- Do NOT paraphrase, round, or reformat returned numeric fields — quote
+  `exact` / `value` / `decimal` verbatim.
+- Do NOT use `evaluate` for modular exponentiation; use `mod_pow` — it is
+  overflow-safe and direction-aware where `evaluate(X**Y % Z)` is not at
+  cryptographic scales.
+- Do NOT collapse exact rationals into floats — fractions must stay exact.
+</never>
 
 <routing_cheat_sheet>
 Common user phrasings -> tool:

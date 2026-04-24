@@ -1,0 +1,29 @@
+{
+  "description": "math-mcp routing — PreToolUse:Bash intercepts shell calculator patterns; UserPromptSubmit injects a pre-response directive when the user's prompt contains math signals; SubagentStart re-plants routing rules into every spawned subagent so delegation isn't an enforcement hole. Server-level rules arrive via the MCP `instructions` field.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/userpromptsubmit.mjs" }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagentstart.mjs" }
+        ]
+      }
+    ]
+  }
+}
