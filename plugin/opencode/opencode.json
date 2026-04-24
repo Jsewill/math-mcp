@@ -4,6 +4,11 @@
     "math-mcp": {
       "type": "local",
       "command": ["uvx", "--from", "git+https://github.com/Jsewill/math-mcp", "sympy-math-mcp"],
+      "env": {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "init.defaultObjectFormat",
+        "GIT_CONFIG_VALUE_0": "sha1"
+      },
       "enabled": true
     }
   }
