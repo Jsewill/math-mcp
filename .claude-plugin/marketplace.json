@@ -7,14 +7,14 @@
   },
   "metadata": {
     "description": "math-mcp plugin marketplace — exact, arbitrary-precision, and symbolic math with routing enforcement.",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "plugins": [
     {
       "name": "math-mcp",
       "source": "./plugin",
       "description": "Routing enforcement for math-mcp: PreToolUse:Bash intercepts shell calculator patterns, UserPromptSubmit injects a pre-response directive on math prompts, SubagentStart re-plants rules into spawned subagents, plus a trigger-phrase skill and /math-verify slash command. Bundles the math-mcp MCP server.",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "author": {
         "name": "Abraham Sewill",
         "url": "https://github.com/Jsewill"

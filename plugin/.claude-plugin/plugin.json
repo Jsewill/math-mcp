@@ -1,6 +1,6 @@
 {
   "name": "math-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Routing enforcement for math-mcp — PreToolUse:Bash intercepts shell calculators, SessionStart injects a terse routing cheat sheet, plus a trigger-phrase skill and /math-verify slash command.",
   "author": {
     "name": "Abraham Sewill",
