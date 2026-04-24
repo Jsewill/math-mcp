@@ -3,7 +3,7 @@
   "mcp": {
     "math-mcp": {
       "type": "local",
-      "command": ["uvx", "math-mcp"],
+      "command": ["uvx", "--from", "git+https://github.com/Jsewill/math-mcp", "sympy-math-mcp"],
       "enabled": true
     }
   }

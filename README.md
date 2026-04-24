@@ -34,27 +34,29 @@ Every tool returns a typed [Pydantic](https://docs.pydantic.dev) model, so MCP c
 ### With `uv` / `uvx` (recommended)
 
 ```bash
-uvx math-mcp
+uvx --from git+https://github.com/Jsewill/math-mcp sympy-math-mcp
 ```
 
 or from a local checkout:
 
 ```bash
 uv tool install .
-math-mcp
+sympy-math-mcp
 ```
 
 ### With `pip`
 
 ```bash
-pip install math-mcp
-math-mcp
+pip install git+https://github.com/Jsewill/math-mcp
+sympy-math-mcp
 ```
+
+> The PyPI distribution is named `sympy-math-mcp` (the bare `math-mcp` name belongs to an unrelated package). Once published, `uvx sympy-math-mcp` / `pip install sympy-math-mcp` will work without the git URL.
 
 ## Register with Claude Code
 
 ```bash
-claude mcp add math-mcp --scope user -- uvx math-mcp
+claude mcp add math-mcp --scope user -- uvx --from git+https://github.com/Jsewill/math-mcp sympy-math-mcp
 ```
 
 Or add to `~/.claude.json` manually:
@@ -64,7 +66,7 @@ Or add to `~/.claude.json` manually:
   "mcpServers": {
     "math-mcp": {
       "command": "uvx",
-      "args": ["math-mcp"]
+      "args": ["--from", "git+https://github.com/Jsewill/math-mcp", "sympy-math-mcp"]
     }
   }
 }
@@ -79,7 +81,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "math-mcp": {
       "command": "uvx",
-      "args": ["math-mcp"]
+      "args": ["--from", "git+https://github.com/Jsewill/math-mcp", "sympy-math-mcp"]
     }
   }
 }
@@ -189,7 +191,7 @@ Coverage is enforced at 100% (`fail_under = 100` in `pyproject.toml`); any regre
 Run the server directly (stdio transport):
 
 ```bash
-uv run math-mcp
+uv run sympy-math-mcp
 ```
 
 ## License

@@ -14,7 +14,7 @@
   "mcpServers": {
     "math-mcp": {
       "command": "uvx",
-      "args": ["math-mcp"]
+      "args": ["--from", "git+https://github.com/Jsewill/math-mcp", "sympy-math-mcp"]
     }
   },
   "skills": "./skills/"

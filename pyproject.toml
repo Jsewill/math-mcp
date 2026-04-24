@@ -1,5 +1,5 @@
 [project]
-name = "math-mcp"
+name = "sympy-math-mcp"
 version = "0.3.0"
 description = "An MCP server providing exact, arbitrary-precision, and symbolic math tools backed by SymPy."
 readme = "README.md"
@@ -33,7 +33,7 @@ Issues = "https://github.com/Jsewill/math-mcp/issues"
 Repository = "https://github.com/Jsewill/math-mcp"
 
 [project.scripts]
-math-mcp = "math_mcp.server:main"
+sympy-math-mcp = "math_mcp.server:main"
 
 [dependency-groups]
 dev = [
